@@ -157,6 +157,10 @@ class Session:
     def closed(self) -> bool:
         return self._closed
 
+    @property
+    def last_snapshot(self) -> str:
+        return self._last_snapshot
+
     def touch(self) -> None:
         self.last_used = time.monotonic()
 

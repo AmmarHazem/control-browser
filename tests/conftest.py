@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from app.config import Settings
+from tests.fixture_site.fake_llm import FakeLLM
 from tests.fixture_site.server import FixtureSite
+from tests.fixture_site.service import ServiceHarness
 
 
 @pytest.fixture(scope="session")
@@ -39,3 +41,19 @@ async def pool(settings):
 @pytest.fixture
 async def session(pool):
     return await pool.open()
+
+
+@pytest.fixture
+def llm():
+    fake = FakeLLM().start()
+    yield fake
+    fake.stop()
+
+
+@pytest.fixture
+def service(settings, llm):
+    harness = ServiceHarness(
+        settings.model_copy(update={"llm_base_url": llm.base_url, "llm_model": "fake-model"})
+    ).start()
+    yield harness
+    harness.stop()

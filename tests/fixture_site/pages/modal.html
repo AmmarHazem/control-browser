@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Modal demo</title></head>
+<body>
+<h1>Modal demo</h1>
+<button id="open-modal" onclick="document.getElementById('modal').hidden = false">Open modal</button>
+<button id="alert-btn" onclick="alert('Something happened')">Trigger alert</button>
+<button id="confirm-btn" onclick="document.getElementById('confirm-out').textContent = confirm('Are you sure?') ? 'accepted' : 'dismissed'">Trigger confirm</button>
+<div id="modal" role="dialog" aria-label="Details" hidden>
+  <h2>Modal title</h2>
+  <p>Modal body text.</p>
+  <button id="close-modal" onclick="document.getElementById('modal').hidden = true">Close modal</button>
+</div>
+<p id="confirm-out"></p>
+</body>
+</html>

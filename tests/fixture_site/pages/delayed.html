@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Delayed content</title></head>
+<body>
+<h1>Delayed content</h1>
+<div id="slot">Loading...</div>
+<script>
+setTimeout(function () {
+  var slot = document.getElementById('slot');
+  slot.textContent = '';
+  var b = document.createElement('button');
+  b.id = 'late';
+  b.textContent = 'Late button';
+  slot.appendChild(b);
+  var p = document.createElement('p');
+  p.textContent = 'The late content has arrived.';
+  slot.appendChild(p);
+}, 400);
+</script>
+</body>
+</html>

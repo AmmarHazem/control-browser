@@ -1,0 +1,57 @@
+[project]
+name = "control-browser"
+version = "0.1.0"
+description = "Lets an LLM operate a web browser: stateful Sessions, Snapshot-first perception, autonomous Runs"
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6.0",
+    "playwright>=1.49.0",
+    "mcp>=1.9.0",
+    "openai>=2.0.0",
+    "httpx>=0.28.1",
+    "trafilatura>=2.0.0",
+    "python-json-logger>=3.2.0",
+    "jsonschema>=4.23.0",
+    "psutil>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.0",
+    "ruff>=0.8.6",
+    "mypy>=1.14.1",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: needs a real browser and the fixture site",
+]

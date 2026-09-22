@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Contact form</title></head>
+<body>
+<h1>Contact form</h1>
+<form action="/submitted" method="post">
+  <label for="name">Full name</label>
+  <input id="name" name="name" type="text">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email">
+  <label for="topic">Topic</label>
+  <select id="topic" name="topic">
+    <option value="sales">Sales</option>
+    <option value="support">Support</option>
+    <option value="other">Other</option>
+  </select>
+  <label for="subscribe">Subscribe</label>
+  <input id="subscribe" name="subscribe" type="checkbox">
+  <label for="message">Message</label>
+  <textarea id="message" name="message"></textarea>
+  <button type="submit">Send message</button>
+  <button type="button" id="reset-btn" onclick="document.querySelector('form').reset()">Reset</button>
+</form>
+<p><a href="/index.html">Back home</a></p>
+</body>
+</html>

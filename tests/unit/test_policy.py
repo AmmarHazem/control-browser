@@ -98,7 +98,9 @@ class TestDomainPolicy:
 
 class TestStructuralRiskDetection:
     def test_a_submit_button_inside_a_form_is_a_submit_control(self):
-        assert is_submit_control(tag="button", input_type=None, explicit_type="submit", in_form=True)
+        assert is_submit_control(
+            tag="button", input_type=None, explicit_type="submit", in_form=True
+        )
 
     def test_a_form_button_without_a_type_defaults_to_submit(self):
         assert is_submit_control(tag="button", input_type=None, explicit_type=None, in_form=True)
@@ -109,13 +111,17 @@ class TestStructuralRiskDetection:
         )
 
     def test_a_button_outside_a_form_is_not_a_submit_control(self):
-        assert not is_submit_control(tag="button", input_type=None, explicit_type=None, in_form=False)
+        assert not is_submit_control(
+            tag="button", input_type=None, explicit_type=None, in_form=False
+        )
 
     def test_an_input_of_type_submit_is_a_submit_control(self):
         assert is_submit_control(tag="input", input_type="submit", explicit_type=None, in_form=True)
 
     def test_a_text_input_is_not_a_submit_control(self):
-        assert not is_submit_control(tag="input", input_type="text", explicit_type=None, in_form=True)
+        assert not is_submit_control(
+            tag="input", input_type="text", explicit_type=None, in_form=True
+        )
 
     def test_a_link_is_not_a_submit_control(self):
         assert not is_submit_control(tag="a", input_type=None, explicit_type=None, in_form=True)

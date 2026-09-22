@@ -163,9 +163,7 @@ def _make_handler(fake: FakeLLM):
 
             turn = fake.next_turn(body)
             if turn is None:
-                self._json(
-                    500, {"error": {"message": "the fake llm script ran out of turns"}}
-                )
+                self._json(500, {"error": {"message": "the fake llm script ran out of turns"}})
                 return
 
             self._json(

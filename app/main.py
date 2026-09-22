@@ -68,9 +68,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool = SessionPool(settings)
         await pool.start()
         repository = SqliteRunRepository(settings.db_path)
-        screenshots = ScreenshotStore(settings.screenshot_dir, settings.screenshot_retention_seconds)
+        screenshots = ScreenshotStore(
+            settings.screenshot_dir, settings.screenshot_retention_seconds
+        )
         await screenshots.sweep()
-        search = SearxngSearch(settings.searxng_url, settings.searxng_timeout) if settings.searxng_url else None
+        search = (
+            SearxngSearch(settings.searxng_url, settings.searxng_timeout)
+            if settings.searxng_url
+            else None
+        )
         container = Container(
             settings=settings,
             pool=pool,

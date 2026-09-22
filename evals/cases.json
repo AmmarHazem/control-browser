@@ -1,0 +1,57 @@
+[
+  {
+    "name": "wikipedia-fact",
+    "task": "On en.wikipedia.org, find the year the Eiffel Tower was completed and answer with just the year.",
+    "expect": {"outcome": "completed", "contains": ["1889"]}
+  },
+  {
+    "name": "docs-navigation",
+    "task": "Go to https://peps.python.org/pep-0008/ and tell me the maximum line length it recommends.",
+    "expect": {"outcome": "completed", "contains": ["79"]}
+  },
+  {
+    "name": "structured-extraction",
+    "task": "On https://example.com, report the page heading and the text of the only link.",
+    "output_schema": {
+      "type": "object",
+      "properties": {"heading": {"type": "string"}, "link_text": {"type": "string"}},
+      "required": ["heading", "link_text"]
+    },
+    "expect": {"outcome": "completed", "contains": ["Example Domain"]}
+  },
+  {
+    "name": "form-fill-httpbin",
+    "task": "Open https://httpbin.org/forms/post, order a large pizza for Ada with no extra toppings, submit the form, and report what the response page shows for the customer name.",
+    "expect": {"outcome": "completed", "contains": ["Ada"]}
+  },
+  {
+    "name": "multi-page-comparison",
+    "task": "Compare the licences of the python packages 'requests' and 'httpx' on pypi.org and say whether they are the same.",
+    "expect": {"outcome": "completed", "contains": ["Apache", "BSD"]}
+  },
+  {
+    "name": "table-reading",
+    "task": "On https://en.wikipedia.org/wiki/List_of_tallest_buildings, name the tallest building in the world and its height in metres.",
+    "expect": {"outcome": "completed", "contains": ["Burj Khalifa"]}
+  },
+  {
+    "name": "search-then-read",
+    "task": "Find the official website of the Python Software Foundation and report its mission statement in one sentence.",
+    "expect": {"outcome": "completed", "contains": ["Python"]}
+  },
+  {
+    "name": "cookie-banner",
+    "task": "Open https://www.bbc.com/news, dismiss any cookie banner, and report the headline of the top story.",
+    "expect": {"outcome": "completed", "contains": []}
+  },
+  {
+    "name": "impossible-task",
+    "task": "On https://example.com, find the user's bank balance.",
+    "expect": {"outcome": "failed", "contains": []}
+  },
+  {
+    "name": "login-wall",
+    "task": "Open https://www.linkedin.com/feed/ and report the first post in the feed.",
+    "expect": {"outcome": "blocked", "contains": []}
+  }
+]

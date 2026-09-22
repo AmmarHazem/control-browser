@@ -54,12 +54,12 @@ def build_mcp_server(container: Any) -> Server:
                     "Open a browser session and return its session_id. Every other browser tool "
                     "takes that session_id. Close it when you are done."
                 ),
-                inputSchema=OPEN_SESSION_SCHEMA,
+                input_schema=OPEN_SESSION_SCHEMA,
             ),
             types.Tool(
                 name="close_session",
                 description="Close a browser session and free its browser.",
-                inputSchema=CLOSE_SESSION_SCHEMA,
+                input_schema=CLOSE_SESSION_SCHEMA,
             ),
         ]
         for spec in tool_specs(include_search=container.search is not None):
@@ -67,7 +67,7 @@ def build_mcp_server(container: Any) -> Server:
                 types.Tool(
                     name=spec.name,
                     description=spec.description,
-                    inputSchema=spec.json_schema(with_session_id=True),
+                    input_schema=spec.json_schema(with_session_id=True),
                 )
             )
         return types.ListToolsResult(tools=tools)
@@ -117,10 +117,10 @@ def build_mcp_server(container: Any) -> Server:
                     types.ImageContent(
                         type="image",
                         data=base64.b64encode(result.screenshot).decode("ascii"),
-                        mimeType="image/png",
+                        mime_type="image/png",
                     ),
                 ],
-                isError=not result.ok,
+                is_error=not result.ok,
             )
         return _text_result(result.as_dict(), is_error=not result.ok)
 
@@ -157,5 +157,5 @@ async def _open_session(container: Any, args: dict[str, Any]) -> types.CallToolR
 def _text_result(payload: dict[str, Any], *, is_error: bool = False) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
-        isError=is_error,
+        is_error=is_error,
     )

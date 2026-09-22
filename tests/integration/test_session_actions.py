@@ -94,7 +94,7 @@ async def test_new_elements_are_marked_new_after_an_action(session, site):
 
     assert '- button "Close modal" [ref=' in result.observation
     assert "[new]" in result.observation
-    assert '[new]' not in _line_for(result.observation, 'button "Open modal"')
+    assert "[new]" not in _line_for(result.observation, 'button "Open modal"')
 
 
 async def test_an_alert_is_dismissed_and_reported(session, site):

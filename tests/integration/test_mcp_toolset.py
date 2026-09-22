@@ -46,7 +46,9 @@ async def test_a_session_can_be_opened_navigated_and_closed(service, site):
     async with mcp_client(service) as mcp_session:
         session_id = await _open(mcp_session)
 
-        navigated = await _call(mcp_session, "navigate", session_id=session_id, url=site.url("/index.html"))
+        navigated = await _call(
+            mcp_session, "navigate", session_id=session_id, url=site.url("/index.html")
+        )
         assert navigated["ok"] is True
         assert '- heading "Fixture Site"' in navigated["observation"]
 
@@ -68,7 +70,9 @@ async def test_two_sessions_do_not_share_state(service, site):
 
 async def test_an_unknown_session_is_an_error_naming_open_session(service, site):
     async with mcp_client(service) as mcp_session:
-        result = await _call(mcp_session, "navigate", session_id="nope", url=site.url("/index.html"))
+        result = await _call(
+            mcp_session, "navigate", session_id="nope", url=site.url("/index.html")
+        )
 
         assert result["ok"] is False
         assert "open_session" in result["error"]

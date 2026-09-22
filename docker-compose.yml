@@ -1,0 +1,26 @@
+services:
+  control-browser:
+    build: .
+    ports:
+      - "8100:8100"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      SEARXNG_URL: ${SEARXNG_URL:-}
+    volumes:
+      - browser-data:/app/data
+    # Chromium needs more than the default 64MB of shared memory.
+    shm_size: 1gb
+
+  # Optional. Point SEARXNG_URL at it to give runs the search tool.
+  searxng:
+    image: searxng/searxng:latest
+    profiles: [search]
+    ports:
+      - "8080:8080"
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+
+volumes:
+  browser-data:

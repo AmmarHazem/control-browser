@@ -68,7 +68,7 @@ class NetworkPolicyError(Exception):
 async def resolve_addresses(host: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()
     infos = await loop.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    return [info[4][0] for info in infos]
+    return [str(info[4][0]) for info in infos]
 
 
 async def check_url(url: str, policy: DomainPolicy, *, allow_private: bool = False) -> None:

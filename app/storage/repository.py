@@ -174,7 +174,9 @@ class SqliteRunRepository:
             "SELECT seq, type, payload, at FROM events WHERE run_id = ? ORDER BY seq", (run_id,)
         ).fetchall()
         return [
-            TraceEvent(seq=row["seq"], type=row["type"], payload=json.loads(row["payload"]), at=row["at"])
+            TraceEvent(
+                seq=row["seq"], type=row["type"], payload=json.loads(row["payload"]), at=row["at"]
+            )
             for row in rows
         ]
 

@@ -5,10 +5,11 @@ import base64
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import jsonschema
 from openai import APIStatusError, AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from app.agent.prompts import DONE_TOOL, GIVE_UP_TOOL, build_messages
 from app.agent.run import (
@@ -54,7 +55,7 @@ class RunLoop:
         spec = run.spec
         self._client = AsyncOpenAI(api_key=spec.api_key or "unset", base_url=spec.base_url)
         self._vision_on = spec.vision is not Vision.OFF
-        self._messages = build_messages(spec.task, spec.output_schema)
+        self._messages: list[Any] = build_messages(spec.task, spec.output_schema)
         self._tools = self._build_tools()
         self._step = 0
         self._consecutive_failures = 0
@@ -128,8 +129,8 @@ class RunLoop:
         try:
             response = await self._client.chat.completions.create(
                 model=self.run.spec.model,
-                messages=self._messages,
-                tools=self._tools,
+                messages=cast("list[ChatCompletionMessageParam]", self._messages),
+                tools=cast("list[ChatCompletionToolParam]", self._tools),
                 tool_choice="auto",
             )
         except APIStatusError as exc:
@@ -154,7 +155,7 @@ class RunLoop:
                         "arguments": call.function.arguments,
                     },
                 }
-                for call in choice.tool_calls
+                for call in _function_calls(choice.tool_calls)
             ]
         return payload
 
@@ -208,7 +209,9 @@ class RunLoop:
         try:
             args = json.loads(raw_args) if raw_args.strip() else {}
         except json.JSONDecodeError:
-            await self._reply(call, {"ok": False, "error": f"arguments were not valid JSON: {raw_args}"})
+            await self._reply(
+                call, {"ok": False, "error": f"arguments were not valid JSON: {raw_args}"}
+            )
             return False
 
         await self.run.emit("action.called", {"step": self._step, "action": name, "args": args})
@@ -232,11 +235,11 @@ class RunLoop:
     async def _call_action(self, name: str, args: dict[str, Any]) -> ActionResult:
         self._check_interrupts()
         try:
-            result = await dispatch(
-                name, args, session=self.session, search_client=self._search
-            )
+            result = await dispatch(name, args, session=self.session, search_client=self._search)
         except ActionRejected as exc:
             return ActionResult(ok=False, error=str(exc))
+        except (RunAborted, RunTimedOut, asyncio.CancelledError):
+            raise
         except KeyError as exc:
             return ActionResult(ok=False, error=f"missing argument {exc}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the model, not fatal
@@ -333,9 +336,7 @@ class RunLoop:
 
     # ---- confirmation ----------------------------------------------------
 
-    async def _risk_gate(
-        self, finding: RiskFinding, action: str, context: dict[str, Any]
-    ) -> None:
+    async def _risk_gate(self, finding: RiskFinding, action: str, context: dict[str, Any]) -> None:
         await self.run.emit(
             "risky_action.detected",
             {
@@ -392,7 +393,9 @@ class RunLoop:
 
     # ---- finishing -------------------------------------------------------
 
-    async def _finish(self, outcome: Outcome, *, result: Any = None, error: str | None = None) -> None:
+    async def _finish(
+        self, outcome: Outcome, *, result: Any = None, error: str | None = None
+    ) -> None:
         self.run.record.sources = list(self.session.visited_urls)
         await self.run.mark_finished(outcome, result=result, error=error)
         event = {
@@ -411,6 +414,10 @@ class RunLoop:
                 "steps": self._step,
             },
         )
+
+
+def _function_calls(calls: Any) -> list[Any]:
+    return [call for call in calls if getattr(call, "type", "function") == "function"]
 
 
 def _strip_images(message: dict[str, Any]) -> dict[str, Any]:

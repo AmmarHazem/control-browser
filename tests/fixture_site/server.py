@@ -26,11 +26,11 @@ class _Handler(SimpleHTTPRequestHandler):
             f"    <li>{name}: {', '.join(values)}</li>" for name, values in sorted(fields.items())
         )
         body = (
-            "<!doctype html>\n<html lang=\"en\">\n"
-            "<head><meta charset=\"utf-8\"><title>Submitted</title></head>\n"
+            '<!doctype html>\n<html lang="en">\n'
+            '<head><meta charset="utf-8"><title>Submitted</title></head>\n'
             "<body>\n  <h1>Submission received</h1>\n  <ul>\n"
-            f"{rows}\n  </ul>\n  <p><a href=\"/index.html\">Back home</a></p>\n</body>\n</html>\n"
-        ).encode("utf-8")
+            f'{rows}\n  </ul>\n  <p><a href="/index.html">Back home</a></p>\n</body>\n</html>\n'
+        ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

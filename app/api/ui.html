@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>control-browser</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1a1a18; --muted: #6b6b66; --line: #e2e2dd;
+    --card: #ffffff; --accent: #2f6f4f; --warn: #8a5a00; --bad: #97331f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --fg: #e8e8e4; --muted: #9a9a94; --line: #2c2e31;
+      --card: #1e2022; --accent: #7fc0a0; --warn: #d9a441; --bad: #e08573;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lede { color: var(--muted); margin: 0 0 20px; }
+  form, .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea, button {
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%;
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > div { flex: 1 1 180px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { width: auto; cursor: pointer; background: var(--accent); color: var(--bg); border: none; }
+  button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .event { border-top: 1px solid var(--line); padding: 10px 0; }
+  .event:first-child { border-top: none; }
+  .type { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+  .type.risk { color: var(--warn); }
+  .type.fail { color: var(--bad); }
+  pre {
+    margin: 6px 0 0; padding: 10px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 320px;
+  }
+  img.shot { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+  .confirm { border-color: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>control-browser</h1>
+  <p class="lede">Give a task, watch the browser work.</p>
+
+  <form id="form">
+    <div class="row">
+      <div>
+        <label for="key">API key</label>
+        <input id="key" placeholder="leave empty if the service has none">
+      </div>
+      <div>
+        <label for="autonomy">Autonomy</label>
+        <select id="autonomy">
+          <option value="autonomous">autonomous — never pause</option>
+          <option value="confirm_risky">confirm_risky — ask before risky actions</option>
+        </select>
+      </div>
+      <div>
+        <label for="vision">Vision</label>
+        <select id="vision">
+          <option value="auto">auto</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+        </select>
+      </div>
+    </div>
+    <label for="task">Task</label>
+    <textarea id="task" placeholder="Find the contact form on example.com and tell me which fields it has"></textarea>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label for="steps">Max steps</label>
+        <input id="steps" type="number" min="1" placeholder="50">
+      </div>
+      <div>
+        <label for="shots">Store screenshots</label>
+        <select id="shots"><option value="false">no</option><option value="true">yes</option></select>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="go" type="submit">Run</button>
+      <button id="abort" type="button" class="secondary" disabled>Abort</button>
+    </div>
+  </form>
+
+  <div class="panel" id="pending" hidden></div>
+  <div class="panel" id="trace"><span class="type">no run yet</span></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let runId = null;
+
+function headers() {
+  const key = $('key').value.trim();
+  const base = { 'content-type': 'application/json' };
+  if (key) base['x-api-key'] = key;
+  return base;
+}
+
+try {
+  const saved = localStorage.getItem('cb-key');
+  if (saved) $('key').value = saved;
+} catch (err) { /* private mode */ }
+
+$('key').addEventListener('change', () => {
+  try { localStorage.setItem('cb-key', $('key').value.trim()); } catch (err) { /* ignore */ }
+});
+
+function add(type, body, image) {
+  const wrap = document.createElement('div');
+  wrap.className = 'event';
+  const head = document.createElement('div');
+  head.className = 'type' + (type.includes('risk') || type.includes('confirmation') ? ' risk' : '')
+    + (type.endsWith('failed') || type.endsWith('blocked') ? ' fail' : '');
+  head.textContent = type;
+  wrap.appendChild(head);
+  if (body) {
+    const pre = document.createElement('pre');
+    pre.textContent = body;
+    wrap.appendChild(pre);
+  }
+  if (image) {
+    const img = document.createElement('img');
+    img.className = 'shot';
+    img.src = image;
+    wrap.appendChild(img);
+  }
+  $('trace').appendChild(wrap);
+  wrap.scrollIntoView({ block: 'nearest' });
+}
+
+function describe(event) {
+  switch (event.type) {
+    case 'run.started': return 'task: ' + event.task;
+    case 'step.started': return 'step ' + event.step;
+    case 'step.reasoning': return event.text;
+    case 'action.called': return event.action + ' ' + JSON.stringify(event.args);
+    case 'action.result': return (event.ok ? 'ok — ' : 'error — ') + (event.detail || event.error || '');
+    case 'observation': return event.text;
+    case 'risky_action.detected': return event.source + ': ' + event.purpose;
+    case 'confirmation.resolved': return event.decision + (event.note ? ' — ' + event.note : '');
+    case 'vision.disabled': return event.reason;
+    case 'screenshot.stored': return 'step ' + event.step;
+    default: return JSON.stringify({ ...event, type: undefined, seq: undefined, at: undefined });
+  }
+}
+
+function showConfirmation(event) {
+  const panel = $('pending');
+  panel.hidden = false;
+  panel.className = 'panel confirm';
+  panel.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'type risk';
+  title.textContent = 'confirmation requested — ' + event.action;
+  const why = document.createElement('p');
+  why.textContent = event.purpose || '';
+  const note = document.createElement('input');
+  note.placeholder = 'note back to the agent (optional)';
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.style.marginTop = '10px';
+  for (const decision of ['approve', 'reject']) {
+    const button = document.createElement('button');
+    button.textContent = decision;
+    if (decision === 'reject') button.className = 'secondary';
+    button.onclick = async () => {
+      await fetch('/runs/' + runId + '/confirm', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ decision, note: note.value || null }),
+      });
+      panel.hidden = true;
+    };
+    actions.appendChild(button);
+  }
+  panel.append(title, why, note, actions);
+}
+
+async function follow(id) {
+  const response = await fetch('/runs/' + id + '/events', { headers: headers() });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop();
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+      if (!line) continue;
+      const event = JSON.parse(line.slice(6));
+      const image = event.type === 'screenshot.stored'
+        ? '/runs/' + id + '/steps/' + event.step + '/screenshot'
+        : null;
+      add(event.type, describe(event), image);
+      if (event.type === 'confirmation.requested') showConfirmation(event);
+      if (event.type === 'confirmation.resolved') $('pending').hidden = true;
+      if (event.type.startsWith('run.') && event.type !== 'run.started') {
+        $('go').disabled = false;
+        $('abort').disabled = true;
+      }
+    }
+  }
+}
+
+$('form').addEventListener('submit', async (submitEvent) => {
+  submitEvent.preventDefault();
+  $('trace').innerHTML = '';
+  $('pending').hidden = true;
+  $('go').disabled = true;
+  const payload = {
+    task: $('task').value,
+    autonomy: $('autonomy').value,
+    vision: $('vision').value,
+    store_screenshots: $('shots').value === 'true',
+  };
+  if ($('steps').value) payload.max_steps = Number($('steps').value);
+  const response = await fetch('/runs', {
+    method: 'POST', headers: headers(), body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    add('request.failed', await response.text());
+    $('go').disabled = false;
+    return;
+  }
+  runId = (await response.json()).run_id;
+  $('abort').disabled = false;
+  add('run.queued', runId);
+  follow(runId);
+});
+
+$('abort').addEventListener('click', async () => {
+  if (runId) await fetch('/runs/' + runId + '/abort', { method: 'POST', headers: headers() });
+});
+</script>
+</body>
+</html>

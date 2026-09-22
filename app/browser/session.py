@@ -8,8 +8,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from playwright.async_api import BrowserContext, Error as PlaywrightError, Frame, Page
+from playwright.async_api import BrowserContext, Frame, Page
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
+from playwright.async_api._generated import Dialog
 
 from app.browser.snapshot import (
     COLLECT_JS,
@@ -118,7 +120,7 @@ class Session:
         if page in self._pages:
             return
         page.on("dialog", self._on_dialog)
-        page.on("close", lambda _p=page: self._on_page_closed(_p))
+        page.on("close", self._on_page_closed)
         self._pages.append(page)
 
     def _on_page_closed(self, page: Page) -> None:
@@ -130,12 +132,12 @@ class Session:
             elif index < self._active:
                 self._active -= 1
 
-    def _on_dialog(self, dialog: Any) -> None:
+    def _on_dialog(self, dialog: Dialog) -> None:
         message = f"{dialog.type}: {dialog.message}"
         self._pending_dialogs.append(message)
         asyncio.create_task(self._dismiss(dialog))
 
-    async def _dismiss(self, dialog: Any) -> None:
+    async def _dismiss(self, dialog: Dialog) -> None:
         try:
             if dialog.type == "prompt":
                 await dialog.dismiss()
@@ -291,7 +293,7 @@ class Session:
             await self._gate(
                 RiskFinding(
                     RiskSource.STRUCTURAL,
-                    f"click on {probe['tag']} \"{probe.get('label') or ref}\" submits a form",
+                    f'click on {probe["tag"]} "{probe.get("label") or ref}" submits a form',
                 ),
                 "click",
                 {"ref": ref},

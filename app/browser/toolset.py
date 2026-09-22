@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.browser.session import ActionResult, Session
+from app.browser.session import ActionRejected, ActionResult, Session
+
+Handler = Callable[["Session", dict[str, Any]], Awaitable[ActionResult]]
 
 
 @dataclass(frozen=True)
@@ -12,6 +15,7 @@ class ToolSpec:
     description: str
     properties: dict[str, Any]
     required: list[str] = field(default_factory=list)
+    handler: Handler | None = None
     needs_session: bool = True
 
     def json_schema(self, *, with_session_id: bool = False) -> dict[str, Any]:
@@ -42,15 +46,27 @@ TOOL_SPECS: list[ToolSpec] = [
         "Open a url in the active tab and return a snapshot of the page that loads.",
         {"url": {"type": "string", "description": "An absolute http(s) url."}},
         ["url"],
+        handler=lambda s, a: s.navigate(str(a["url"])),
     ),
-    ToolSpec("back", "Go back one entry in the active tab's history.", {}),
-    ToolSpec("forward", "Go forward one entry in the active tab's history.", {}),
-    ToolSpec("reload", "Reload the active tab.", {}),
+    ToolSpec(
+        "back",
+        "Go back one entry in the active tab's history.",
+        {},
+        handler=lambda s, a: s.go_back(),
+    ),
+    ToolSpec(
+        "forward",
+        "Go forward one entry in the active tab's history.",
+        {},
+        handler=lambda s, a: s.go_forward(),
+    ),
+    ToolSpec("reload", "Reload the active tab.", {}, handler=lambda s, a: s.reload()),
     ToolSpec(
         "click",
         "Click the element with this ref. Use it for links, buttons, checkboxes and tabs.",
         {"ref": _REF},
         ["ref"],
+        handler=lambda s, a: s.click(str(a["ref"])),
     ),
     ToolSpec(
         "type",
@@ -68,19 +84,33 @@ TOOL_SPECS: list[ToolSpec] = [
             },
         },
         ["ref", "text"],
+        handler=lambda s, a: s.type_text(
+            str(a["ref"]),
+            str(a["text"]),
+            clear=bool(a.get("clear", True)),
+            press_enter=bool(a.get("press_enter", False)),
+        ),
     ),
     ToolSpec(
         "select_option",
         "Choose an option in the dropdown with this ref, by value or visible label.",
         {"ref": _REF, "value": {"type": "string", "description": "The option value or label."}},
         ["ref", "value"],
+        handler=lambda s, a: s.select_option(str(a["ref"]), str(a["value"])),
     ),
-    ToolSpec("hover", "Hover the element with this ref to reveal menus.", {"ref": _REF}, ["ref"]),
+    ToolSpec(
+        "hover",
+        "Hover the element with this ref to reveal menus.",
+        {"ref": _REF},
+        ["ref"],
+        handler=lambda s, a: s.hover(str(a["ref"])),
+    ),
     ToolSpec(
         "press_key",
         "Press a keyboard key on the active tab, such as Escape, Enter or PageDown.",
         {"key": {"type": "string", "description": "A Playwright key name."}},
         ["key"],
+        handler=lambda s, a: s.press_key(str(a["key"])),
     ),
     ToolSpec(
         "scroll",
@@ -93,6 +123,7 @@ TOOL_SPECS: list[ToolSpec] = [
             },
             "ref": {"type": "string", "description": "Optional ref to scroll into view."},
         },
+        handler=lambda s, a: s.scroll(str(a.get("direction") or "down"), a.get("ref")),
     ),
     ToolSpec(
         "wait_for",
@@ -102,6 +133,9 @@ TOOL_SPECS: list[ToolSpec] = [
             "ref": {"type": "string", "description": "Ref to wait for."},
             "seconds": {"type": "number", "description": "Seconds to wait."},
         },
+        handler=lambda s, a: s.wait_for(
+            text=a.get("text"), ref=a.get("ref"), seconds=a.get("seconds")
+        ),
     ),
     ToolSpec(
         "submit",
@@ -116,17 +150,25 @@ TOOL_SPECS: list[ToolSpec] = [
             },
         },
         ["ref", "purpose"],
+        handler=lambda s, a: s.submit(str(a["ref"]), str(a["purpose"])),
     ),
-    ToolSpec("snapshot", "Take a fresh snapshot of the active tab.", {}),
+    ToolSpec(
+        "snapshot",
+        "Take a fresh snapshot of the active tab.",
+        {},
+        handler=lambda s, a: s.snapshot(),
+    ),
     ToolSpec(
         "screenshot",
         "Take a picture of the viewport. Use it when the snapshot is empty or confusing.",
         {},
+        handler=lambda s, a: s.screenshot(),
     ),
     ToolSpec(
         "get_text",
         "Read the active tab's main content as Markdown. Use it for reading, not for acting.",
         {},
+        handler=lambda s, a: s.get_text(),
     ),
     ToolSpec(
         "find",
@@ -134,19 +176,24 @@ TOOL_SPECS: list[ToolSpec] = [
         "matching lines with their refs.",
         {"query": {"type": "string", "description": "Substring or regular expression."}},
         ["query"],
+        handler=lambda s, a: s.find(str(a["query"])),
     ),
-    ToolSpec("list_tabs", "List the tabs open in this session.", {}),
+    ToolSpec(
+        "list_tabs", "List the tabs open in this session.", {}, handler=lambda s, a: s.list_tabs()
+    ),
     ToolSpec(
         "switch_tab",
         "Make another tab active and snapshot it.",
         {"index": {"type": "integer", "description": "Tab index from list_tabs."}},
         ["index"],
+        handler=lambda s, a: s.switch_tab(int(a["index"])),
     ),
     ToolSpec(
         "close_tab",
         "Close a tab. The last tab of a session cannot be closed.",
         {"index": {"type": "integer", "description": "Tab index from list_tabs."}},
         ["index"],
+        handler=lambda s, a: s.close_tab(int(a["index"])),
     ),
 ]
 
@@ -181,61 +228,32 @@ async def dispatch(
     session: Session | None = None,
     search_client: Any = None,
 ) -> ActionResult:
-    if name == "search":
+    if name == SEARCH_SPEC.name:
         if search_client is None:
             return ActionResult(ok=False, error="search is not configured on this service")
         return await search_client.search(
             str(args.get("query", "")), max_results=int(args.get("max_results") or 8)
         )
 
+    spec = spec_by_name(name)
+    if spec is None or spec.handler is None:
+        return ActionResult(ok=False, error=f"unknown tool {name}")
     if session is None:
         return ActionResult(ok=False, error=f"{name} needs a session")
+    return await spec.handler(session, args)
 
-    match name:
-        case "navigate":
-            return await session.navigate(str(args["url"]))
-        case "back":
-            return await session.go_back()
-        case "forward":
-            return await session.go_forward()
-        case "reload":
-            return await session.reload()
-        case "click":
-            return await session.click(str(args["ref"]))
-        case "type":
-            return await session.type_text(
-                str(args["ref"]),
-                str(args["text"]),
-                clear=bool(args.get("clear", True)),
-                press_enter=bool(args.get("press_enter", False)),
-            )
-        case "select_option":
-            return await session.select_option(str(args["ref"]), str(args["value"]))
-        case "hover":
-            return await session.hover(str(args["ref"]))
-        case "press_key":
-            return await session.press_key(str(args["key"]))
-        case "scroll":
-            return await session.scroll(str(args.get("direction") or "down"), args.get("ref"))
-        case "wait_for":
-            return await session.wait_for(
-                text=args.get("text"), ref=args.get("ref"), seconds=args.get("seconds")
-            )
-        case "submit":
-            return await session.submit(str(args["ref"]), str(args["purpose"]))
-        case "snapshot":
-            return await session.snapshot()
-        case "screenshot":
-            return await session.screenshot()
-        case "get_text":
-            return await session.get_text()
-        case "find":
-            return await session.find(str(args["query"]))
-        case "list_tabs":
-            return await session.list_tabs()
-        case "switch_tab":
-            return await session.switch_tab(int(args["index"]))
-        case "close_tab":
-            return await session.close_tab(int(args["index"]))
-        case _:
-            return ActionResult(ok=False, error=f"unknown tool {name}")
+
+async def call_tool(
+    name: str,
+    args: dict[str, Any],
+    *,
+    session: Session | None = None,
+    search_client: Any = None,
+) -> ActionResult:
+    """Dispatch, turning the two argument faults a caller can cause into readable results."""
+    try:
+        return await dispatch(name, args, session=session, search_client=search_client)
+    except ActionRejected as exc:
+        return ActionResult(ok=False, error=str(exc))
+    except KeyError as exc:
+        return ActionResult(ok=False, error=f"missing argument {exc}")

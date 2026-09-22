@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.screenshot_dir, settings.screenshot_retention_seconds
         )
         await screenshots.sweep()
+        sweeper = asyncio.create_task(
+            screenshots.sweep_forever(settings.screenshot_sweep_interval_seconds)
+        )
         search = (
             SearxngSearch(settings.searxng_url, settings.searxng_timeout)
             if settings.searxng_url
@@ -97,6 +101,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 yield
         finally:
+            sweeper.cancel()
+            with suppress(asyncio.CancelledError):
+                await sweeper
             await container.runs.shutdown()
             await pool.shutdown()
             repository.close()

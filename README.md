@@ -94,9 +94,11 @@ A Risky Action is detected three ways, and is always tagged in the Trace even wh
 
 ### Safety
 
-Requests to private, loopback, link-local and metadata addresses are refused. On top of that sit an
-operator-wide blocked-domain list that no Run can override, and per-Run allow/block lists.
-Navigations to the same host are spaced out. The browser presents itself as an ordinary Chrome; it
+Every request the browser makes — page loads, sub-resources, redirects, whatever JavaScript starts —
+is checked before it leaves: private, loopback, link-local and metadata addresses are refused, and
+so is anything the operator-wide blocked-domain list or the per-Run allow/block lists exclude. The
+check sits on the browser context rather than on the navigate Action, so a link or a script cannot
+route around it. Navigations to the same host are spaced out. The browser presents itself as an ordinary Chrome; it
 does not spoof fingerprints and does not try to beat captchas. The agent cannot execute JavaScript
 on a page, so hostile page text cannot escalate into code execution.
 

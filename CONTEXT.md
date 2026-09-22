@@ -66,5 +66,10 @@ An Action whose effect is hard to undo outside the browser — submitting an ord
 _Avoid_: Dangerous action, destructive action, write action
 
 **Confirmation**:
-The pause a Run enters before a Risky Action, awaiting a caller's decision to proceed or abort.
+The pause a Run enters before a Risky Action, awaiting the caller's Decision.
 _Avoid_: Approval, human-in-the-loop, interrupt
+
+**Decision**:
+What a caller answers a Confirmation with: approve or reject. A Confirmation nobody answers times
+out, and the Run is Aborted.
+_Avoid_: Response, verdict

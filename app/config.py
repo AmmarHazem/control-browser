@@ -61,6 +61,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     screenshot_retention_seconds: float = 86400.0
+    screenshot_sweep_interval_seconds: float = 3600.0
 
     @field_validator("api_keys", "blocked_domains", mode="before")
     @classmethod

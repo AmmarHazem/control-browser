@@ -7,8 +7,9 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
-from playwright.async_api import BrowserContext, Frame, Page
+from playwright.async_api import BrowserContext, Frame, Page, Request, Route
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 from playwright.async_api._generated import Dialog
@@ -105,13 +106,13 @@ class Session:
         self._prev_signatures: Counter[str] | None = None
         self._last_snapshot: str = ""
         self._pending_dialogs: list[str] = []
+        self._refusals: list[str] = []
+        self._host_decisions: dict[str, str] = {}
         self._closed = False
 
         context.on("page", self._on_page)
         for page in context.pages:
             self._attach(page)
-
-    # ---- lifecycle -------------------------------------------------------
 
     def _on_page(self, page: Page) -> None:
         self._attach(page)
@@ -146,6 +147,9 @@ class Session:
         except PlaywrightError:
             pass
 
+    async def export_storage_state(self) -> dict[str, Any]:
+        return dict(await self.context.storage_state())
+
     async def close(self) -> None:
         if self._closed:
             return
@@ -173,8 +177,6 @@ class Session:
 
     def age_seconds(self) -> float:
         return time.monotonic() - self.created_at
-
-    # ---- pages -----------------------------------------------------------
 
     async def page(self) -> Page:
         if not self._pages:
@@ -218,7 +220,39 @@ class Session:
         await self._pages[index].close()
         return await self._finish(f"closed tab {index}")
 
-    # ---- navigation ------------------------------------------------------
+    async def install_network_guard(self) -> None:
+        await self.context.route("**/*", self._guard_request)
+
+    async def _guard_request(self, route: Route, request: Request) -> None:
+        reason = await self._reason_to_refuse(request.url)
+        if reason is None:
+            await route.continue_()
+            return
+        self._refusals.append(reason)
+        await route.abort("blockedbyclient")
+
+    async def _reason_to_refuse(self, url: str) -> str | None:
+        host = urlsplit(url).hostname
+        if not host:
+            return None
+        cached = self._host_decisions.get(host)
+        if cached is not None:
+            return cached or None
+        try:
+            await check_url(url, self.domain_policy, allow_private=self.allow_private_addresses)
+        except NetworkPolicyError as exc:
+            self._host_decisions[host] = str(exc)
+            return str(exc)
+        self._host_decisions[host] = ""
+        return None
+
+    def forget_host_decisions(self) -> None:
+        self._host_decisions.clear()
+
+    def _drain_refusals(self) -> list[str]:
+        refusals = list(dict.fromkeys(self._refusals))
+        self._refusals.clear()
+        return refusals
 
     async def navigate(self, url: str) -> ActionResult:
         self.touch()
@@ -238,43 +272,32 @@ class Session:
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"navigation to {url} failed: {_clean(exc)}")
 
-        blocked = await self._enforce_landing(page)
-        if blocked:
-            return blocked
         return await self._finish(f"navigated to {page.url}")
 
-    async def _enforce_landing(self, page: Page) -> ActionResult | None:
-        try:
-            await check_url(
-                page.url, self.domain_policy, allow_private=self.allow_private_addresses
-            )
-        except NetworkPolicyError as exc:
-            try:
-                await page.goto("about:blank")
-            except PlaywrightError:
-                pass
-            return ActionResult(ok=False, error=f"landed on a blocked destination: {exc}")
-        return None
-
     async def go_back(self) -> ActionResult:
-        self.touch()
-        page = await self.page()
-        await page.go_back(timeout=self.limits.action_timeout_seconds * 1000)
-        return await self._finish("went back")
+        return await self._history_move("back")
 
     async def go_forward(self) -> ActionResult:
-        self.touch()
-        page = await self.page()
-        await page.go_forward(timeout=self.limits.action_timeout_seconds * 1000)
-        return await self._finish("went forward")
+        return await self._history_move("forward")
 
     async def reload(self) -> ActionResult:
+        return await self._history_move("reload")
+
+    async def _history_move(self, move: str) -> ActionResult:
         self.touch()
         page = await self.page()
-        await page.reload(timeout=self.limits.action_timeout_seconds * 1000)
-        return await self._finish("reloaded")
-
-    # ---- interaction -----------------------------------------------------
+        timeout = self.limits.action_timeout_seconds * 1000
+        moves = {"back": page.go_back, "forward": page.go_forward, "reload": page.reload}
+        try:
+            await moves[move](timeout=timeout)
+        except PlaywrightTimeout:
+            return ActionResult(ok=False, error=f"{move} timed out")
+        except PlaywrightError as exc:
+            refusals = self._drain_refusals()
+            if refusals:
+                return ActionResult(ok=False, error=f"{move} was refused: {'; '.join(refusals)}")
+            return ActionResult(ok=False, error=f"{move} failed: {_clean(exc)}")
+        return await self._finish(f"{move} done")
 
     async def click(self, ref: str) -> ActionResult:
         self.touch()
@@ -300,6 +323,7 @@ class Session:
             )
         if probe and probe.get("href"):
             await self._gate_url(probe["href"], "click")
+        await self._gate_url((await self.page()).url, "click")
 
         page = await self.page()
         try:
@@ -310,9 +334,6 @@ class Session:
             return ActionResult(ok=False, error=f"clicking {ref} failed: {_clean(exc)}")
 
         await _settle(page)
-        blocked = await self._enforce_landing(await self.page())
-        if blocked:
-            return blocked
         return await self._finish(f"clicked {ref}")
 
     async def type_text(
@@ -351,9 +372,6 @@ class Session:
 
         page = await self.page()
         await _settle(page)
-        blocked = await self._enforce_landing(await self.page())
-        if blocked:
-            return blocked
         suffix = " and pressed Enter" if press_enter else ""
         return await self._finish(f"typed into {ref}{suffix}")
 
@@ -443,9 +461,6 @@ class Session:
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"submitting via {ref} failed: {_clean(exc)}")
         await _settle(page)
-        blocked = await self._enforce_landing(await self.page())
-        if blocked:
-            return blocked
         return await self._finish(f"submitted via {ref} ({purpose})")
 
     async def wait_for(
@@ -475,8 +490,6 @@ class Session:
             await asyncio.sleep(min(seconds, self.limits.action_timeout_seconds))
             return await self._finish(f"waited {seconds}s")
         return ActionResult(ok=False, error="wait_for needs one of text, ref or seconds")
-
-    # ---- observation -----------------------------------------------------
 
     async def snapshot(self, *, mark_new: bool = True) -> ActionResult:
         self.touch()
@@ -532,12 +545,15 @@ class Session:
             data={"matches": matches[:100]},
         )
 
-    # ---- internals -------------------------------------------------------
-
     async def _finish(self, detail: str) -> ActionResult:
+        page = await self.page()
+        self._record_source(page.url)
         dialogs = self._drain_dialogs()
         if dialogs:
             detail = f"{detail}; dialog handled ({'; '.join(dialogs)})"
+        refusals = self._drain_refusals()
+        if refusals:
+            detail = f"{detail}; requests refused ({'; '.join(refusals)})"
         observation = None
         if self.auto_snapshot:
             rendered = await self._take_snapshot(mark_new=True)
@@ -548,6 +564,12 @@ class Session:
         dialogs = list(self._pending_dialogs)
         self._pending_dialogs.clear()
         return dialogs
+
+    def _record_source(self, url: str) -> None:
+        if not url or url == "about:blank":
+            return
+        if not self.visited_urls or self.visited_urls[-1] != url:
+            self.visited_urls.append(url)
 
     async def _locator(self, ref: str):
         target = self._refs.get(ref)
@@ -601,9 +623,7 @@ class Session:
         self._known_refs.update(refs)
         self._prev_signatures = rendered.signatures
         self._last_snapshot = rendered.text
-        url = payload["url"]
-        if url and (not self.visited_urls or self.visited_urls[-1] != url):
-            self.visited_urls.append(url)
+        self._record_source(payload["url"])
         return rendered
 
     async def _collect(self, page: Page) -> tuple[dict, dict[str, RefTarget]]:

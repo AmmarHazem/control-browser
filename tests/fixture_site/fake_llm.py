@@ -18,8 +18,6 @@ class FakeLLM:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
-    # ---- scripting -------------------------------------------------------
-
     def tool(self, name: str, args: dict[str, Any] | None = None, *, say: str = "") -> FakeLLM:
         return self.tools([(name, args or {})], say=say)
 
@@ -71,8 +69,6 @@ class FakeLLM:
     def give_up(self, reason: str, *, blocked: bool = False) -> FakeLLM:
         return self.tool("give_up", {"reason": reason, "blocked": blocked})
 
-    # ---- inspection ------------------------------------------------------
-
     @property
     def base_url(self) -> str:
         host, port = self._server.server_address[:2]
@@ -95,8 +91,6 @@ class FakeLLM:
         if callable(turn):
             return turn(request)
         return turn
-
-    # ---- lifecycle -------------------------------------------------------
 
     def start(self) -> FakeLLM:
         self._thread.start()

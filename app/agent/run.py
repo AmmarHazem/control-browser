@@ -30,6 +30,13 @@ class Outcome(StrEnum):
     BLOCKED = "blocked"
 
 
+class Decision(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    TIMEOUT = "timeout"
+    ABORT = "abort"
+
+
 class RunStatus(StrEnum):
     RUNNING = "running"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
@@ -91,7 +98,7 @@ class PendingConfirmation:
     purpose: str
     source: str
     snapshot: str
-    future: asyncio.Future[tuple[str, str | None]]
+    future: asyncio.Future[tuple[Decision, str | None]]
 
 
 class Run:
@@ -117,8 +124,6 @@ class Run:
         self._finished = asyncio.Event()
         self._aborted = False
 
-    # ---- trace -----------------------------------------------------------
-
     async def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> TraceEvent:
         self._seq += 1
         event = TraceEvent(seq=self._seq, type=event_type, payload=payload or {}, at=time.time())
@@ -137,8 +142,6 @@ class Run:
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._subscribers.discard(queue)
-
-    # ---- state -----------------------------------------------------------
 
     @property
     def finished(self) -> bool:
@@ -168,9 +171,9 @@ class Run:
     def abort(self) -> None:
         self._aborted = True
         if self.pending and not self.pending.future.done():
-            self.pending.future.set_result(("abort", None))
+            self.pending.future.set_result((Decision.ABORT, None))
 
-    def resolve_confirmation(self, decision: str, note: str | None) -> bool:
+    def resolve_confirmation(self, decision: Decision, note: str | None) -> bool:
         if self.pending is None or self.pending.future.done():
             return False
         self.pending.future.set_result((decision, note))

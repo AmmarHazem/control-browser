@@ -7,8 +7,7 @@ from typing import Any
 import mcp.types as types
 from mcp.server.lowlevel import Server
 
-from app.browser.session import ActionRejected, ActionResult
-from app.browser.toolset import dispatch, spec_by_name, tool_specs
+from app.browser.toolset import call_tool, spec_by_name, tool_specs
 from app.policy.network import DomainPolicy
 
 OPEN_SESSION_SCHEMA = {
@@ -103,12 +102,7 @@ def build_mcp_server(container: Any) -> Server:
                     is_error=True,
                 )
 
-        try:
-            result = await dispatch(name, args, session=session, search_client=container.search)
-        except ActionRejected as exc:
-            result = ActionResult(ok=False, error=str(exc))
-        except KeyError as exc:
-            result = ActionResult(ok=False, error=f"missing argument {exc}")
+        result = await call_tool(name, args, session=session, search_client=container.search)
 
         if result.screenshot:
             return types.CallToolResult(
@@ -149,7 +143,7 @@ async def _open_session(container: Any, args: dict[str, Any]) -> types.CallToolR
             risky_url_patterns=list(args.get("risky_url_patterns") or []),
             auto_snapshot=bool(args.get("auto_snapshot", True)),
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the caller as a tool error
+    except Exception as exc:  # noqa: BLE001
         return _text_result({"ok": False, "error": str(exc)}, is_error=True)
     return _text_result({"ok": True, "session_id": session.id})
 

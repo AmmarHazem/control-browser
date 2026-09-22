@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from app.agent.loop import RunLoop
-from app.agent.run import Autonomy, Run, RunSpec, Vision
+from app.agent.run import Autonomy, Decision, Run, RunSpec, Vision
 from app.browser.pool import SessionPool
 from app.browser.session import SessionLimits
 from app.config import Settings
@@ -36,8 +36,6 @@ class RunManager:
         self._screenshots = screenshots
         self._search = search_client
         self._runs: dict[str, Run] = {}
-
-    # ---- request -> spec -------------------------------------------------
 
     def build_spec(self, payload: dict[str, Any], *, tenant_id: str | None = None) -> RunSpec:
         settings = self._settings
@@ -82,8 +80,6 @@ class RunManager:
             tenant_id=tenant_id,
         )
 
-    # ---- lifecycle -------------------------------------------------------
-
     async def start(self, spec: RunSpec) -> Run:
         settings = self._settings
         limits = SessionLimits(
@@ -96,11 +92,6 @@ class RunManager:
             session = self._pool.get(spec.session_id)
             if session is None:
                 raise UnknownSessionError(f"unknown session {spec.session_id}")
-            session.limits = limits
-            session.risky_url_patterns = [
-                *session.risky_url_patterns,
-                *spec.risky_url_patterns,
-            ]
         else:
             session = await self._pool.open(
                 domain_policy=DomainPolicy(
@@ -161,7 +152,7 @@ class RunManager:
         run = self._runs.get(run_id)
         if run is None:
             return False
-        return run.resolve_confirmation(decision, note)
+        return run.resolve_confirmation(Decision(decision), note)
 
     async def shutdown(self) -> None:
         for run in list(self._runs.values()):

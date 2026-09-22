@@ -4,9 +4,11 @@ import asyncio
 import logging
 import uuid
 from enum import StrEnum
+from typing import Any
 
 import psutil
 from playwright.async_api import Browser, Playwright, async_playwright
+from playwright.async_api import Error as PlaywrightError
 
 from app.browser.session import Session, SessionLimits
 from app.config import Settings
@@ -40,14 +42,28 @@ class SessionPool:
         self._browser: Browser | None = None
         self._janitor: asyncio.Task | None = None
         self._rate_limiter = HostRateLimiter(settings.navigation_min_interval_seconds)
+        self._user_agent: str | None = settings.browser_user_agent
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
-            headless=self._settings.browser_headless,
-            args=["--disable-blink-features=AutomationControlled"],
+            headless=self._settings.browser_headless
         )
+        self._user_agent = self._settings.browser_user_agent or await self._ordinary_user_agent()
         self._janitor = asyncio.create_task(self._janitor_loop())
+
+    async def _ordinary_user_agent(self) -> str | None:
+        if self._browser is None:
+            return None
+        context = await self._browser.new_context()
+        try:
+            page = await context.new_page()
+            reported = str(await page.evaluate("navigator.userAgent"))
+        except PlaywrightError:
+            return None
+        finally:
+            await context.close()
+        return reported.replace("HeadlessChrome", "Chrome")
 
     async def shutdown(self) -> None:
         if self._janitor:
@@ -67,8 +83,6 @@ class SessionPool:
             await self._playwright.stop()
             self._playwright = None
 
-    # ---- sessions --------------------------------------------------------
-
     async def open(
         self,
         *,
@@ -76,6 +90,7 @@ class SessionPool:
         risky_url_patterns: list[str] | None = None,
         limits: SessionLimits | None = None,
         auto_snapshot: bool = True,
+        storage_state: dict[str, Any] | None = None,
     ) -> Session:
         if self._browser is None:
             raise RuntimeError("session pool is not started")
@@ -104,8 +119,9 @@ class SessionPool:
                 "width": settings.browser_viewport_width,
                 "height": settings.browser_viewport_height,
             },
-            user_agent=settings.browser_user_agent,
+            user_agent=self._user_agent,
             accept_downloads=False,
+            storage_state=storage_state,  # type: ignore[arg-type]
         )
         session = Session(
             session_id=uuid.uuid4().hex,
@@ -123,6 +139,7 @@ class SessionPool:
             allow_private_addresses=settings.allow_private_addresses,
             auto_snapshot=auto_snapshot,
         )
+        await session.install_network_guard()
         async with self._lock:
             self._sessions[session.id] = session
         logger.info("session opened", extra={"session_id": session.id})
@@ -146,7 +163,7 @@ class SessionPool:
     def count(self) -> int:
         return len(self._sessions)
 
-    def snapshot_state(self) -> list[dict]:
+    def describe_sessions(self) -> list[dict]:
         return [
             {
                 "session_id": session.id,
@@ -155,8 +172,6 @@ class SessionPool:
             }
             for session in self._sessions.values()
         ]
-
-    # ---- housekeeping ----------------------------------------------------
 
     def _reap_closed(self) -> None:
         for session_id, session in list(self._sessions.items()):

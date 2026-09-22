@@ -27,6 +27,17 @@ class ScreenshotStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(image)
 
+    async def sweep_forever(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                removed = await self.sweep()
+            except OSError:
+                logger.warning("screenshot sweep failed")
+                continue
+            if removed:
+                logger.info("screenshots swept", extra={"removed": removed})
+
     async def sweep(self) -> int:
         return await asyncio.to_thread(self._sweep)
 

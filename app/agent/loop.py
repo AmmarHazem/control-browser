@@ -15,6 +15,7 @@ from app.agent.prompts import DONE_TOOL, GIVE_UP_TOOL, build_messages
 from app.agent.run import (
     EVENT_OBSERVATION_LIMIT,
     Autonomy,
+    Decision,
     Outcome,
     PendingConfirmation,
     Run,
@@ -23,8 +24,10 @@ from app.agent.run import (
     RunTimedOut,
     Vision,
 )
-from app.browser.session import ActionRejected, ActionResult, Session
-from app.browser.toolset import dispatch, tool_specs
+from app.browser.session import ActionRejected, ActionResult, Session, SessionLimits
+from app.browser.toolset import call_tool, tool_specs
+from app.logging_setup import log_context, set_step
+from app.policy.network import DomainPolicy
 from app.policy.risky import RiskFinding
 from app.storage.screenshots import ScreenshotStore
 
@@ -61,12 +64,17 @@ class RunLoop:
         self._consecutive_failures = 0
         self._nudged = False
         self._deadline = time.monotonic() + spec.timeout_seconds
-
-    # ---- entry point -----------------------------------------------------
+        self._source_offset = len(session.visited_urls)
+        self._restore: dict[str, Any] | None = None
 
     async def execute(self) -> None:
         run = self.run
-        self.session.risk_gate = self._risk_gate
+        self._apply_session_policy()
+        with log_context(run_id=run.id, session_id=self.session.id):
+            await self._execute_within_context()
+
+    async def _execute_within_context(self) -> None:
+        run = self.run
         await run.emit("run.started", {"task": run.spec.task, "session_id": self.session.id})
         try:
             await self._drive()
@@ -77,11 +85,11 @@ class RunLoop:
         except asyncio.CancelledError:
             await self._finish(Outcome.ABORTED, error="run was cancelled")
             raise
-        except Exception as exc:  # noqa: BLE001 - reported as the run's outcome
+        except Exception as exc:  # noqa: BLE001
             logger.exception("run failed", extra={"run_id": run.id})
             await self._finish(Outcome.FAILED, error=f"{type(exc).__name__}: {exc}")
         finally:
-            self.session.risk_gate = None
+            self._restore_session_policy()
 
     async def _drive(self) -> None:
         spec = self.run.spec
@@ -93,6 +101,7 @@ class RunLoop:
                 )
                 return
             self._step += 1
+            set_step(self._step)
             self.run.record.steps = self._step
             await self.run.emit("step.started", {"step": self._step})
 
@@ -123,8 +132,6 @@ class RunLoop:
         if time.monotonic() > self._deadline:
             raise RunTimedOut("the run exceeded its time limit")
 
-    # ---- llm -------------------------------------------------------------
-
     async def _complete(self) -> dict[str, Any] | None:
         try:
             response = await self._client.chat.completions.create(
@@ -139,7 +146,7 @@ class RunLoop:
                 return await self._complete()
             await self._finish(Outcome.FAILED, error=f"the model endpoint failed: {exc}")
             return None
-        except Exception as exc:  # noqa: BLE001 - reported as the run's outcome
+        except Exception as exc:  # noqa: BLE001
             await self._finish(Outcome.FAILED, error=f"the model endpoint failed: {exc}")
             return None
 
@@ -184,8 +191,6 @@ class RunLoop:
         self._messages.append({"role": "assistant", "content": content})
         self._messages.append({"role": "user", "content": NUDGE})
         return False
-
-    # ---- tools -----------------------------------------------------------
 
     def _build_tools(self) -> list[dict[str, Any]]:
         specs = tool_specs(include_search=self._search is not None)
@@ -235,18 +240,14 @@ class RunLoop:
     async def _call_action(self, name: str, args: dict[str, Any]) -> ActionResult:
         self._check_interrupts()
         try:
-            result = await dispatch(name, args, session=self.session, search_client=self._search)
-        except ActionRejected as exc:
-            return ActionResult(ok=False, error=str(exc))
+            result = await call_tool(name, args, session=self.session, search_client=self._search)
         except (RunAborted, RunTimedOut, asyncio.CancelledError):
             raise
-        except KeyError as exc:
-            return ActionResult(ok=False, error=f"missing argument {exc}")
-        except Exception as exc:  # noqa: BLE001 - surfaced to the model, not fatal
-            logger.warning("action raised", extra={"run_id": self.run.id, "action": name})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action raised", extra={"action": name})
             return ActionResult(ok=False, error=f"{type(exc).__name__}: {exc}")
 
-        if result.ok and not result.screenshot and self._should_look():
+        if not result.screenshot and self._should_look():
             shot = await self.session.screenshot()
             if shot.ok:
                 result.screenshot = shot.screenshot
@@ -334,7 +335,40 @@ class RunLoop:
         await self._finish(Outcome.COMPLETED, result=result)
         return True
 
-    # ---- confirmation ----------------------------------------------------
+    def _apply_session_policy(self) -> None:
+        session = self.session
+        spec = self.run.spec
+        self._restore = {
+            "limits": session.limits,
+            "domain_policy": session.domain_policy,
+            "risky_url_patterns": session.risky_url_patterns,
+        }
+        session.limits = SessionLimits(
+            snapshot_token_budget=spec.snapshot_token_budget,
+            text_token_budget=spec.text_token_budget,
+            action_timeout_seconds=session.limits.action_timeout_seconds,
+        )
+        session.domain_policy = DomainPolicy(
+            allowed=[*session.domain_policy.allowed, *spec.allowed_domains],
+            blocked=[*session.domain_policy.blocked, *spec.blocked_domains],
+            operator_blocked=session.domain_policy.operator_blocked,
+        )
+        session.risky_url_patterns = [
+            *session.risky_url_patterns,
+            *spec.risky_url_patterns,
+        ]
+        session.forget_host_decisions()
+        session.risk_gate = self._risk_gate
+
+    def _restore_session_policy(self) -> None:
+        self.session.risk_gate = None
+        if self._restore is None:
+            return
+        self.session.limits = self._restore["limits"]
+        self.session.domain_policy = self._restore["domain_policy"]
+        self.session.risky_url_patterns = self._restore["risky_url_patterns"]
+        self.session.forget_host_decisions()
+        self._restore = None
 
     async def _risk_gate(self, finding: RiskFinding, action: str, context: dict[str, Any]) -> None:
         await self.run.emit(
@@ -370,7 +404,7 @@ class RunLoop:
                 pending.future, timeout=self.run.spec.confirmation_timeout_seconds
             )
         except TimeoutError:
-            decision, note = "timeout", None
+            decision, note = Decision.TIMEOUT, None
         finally:
             self.run.pending = None
             self.session.idle_suspended = False
@@ -378,25 +412,23 @@ class RunLoop:
             await self.run.persist()
 
         await self.run.emit(
-            "confirmation.resolved", {"step": self._step, "decision": decision, "note": note}
+            "confirmation.resolved", {"step": self._step, "decision": str(decision), "note": note}
         )
-        if decision == "approve":
+        if decision is Decision.APPROVE:
             return
-        if decision == "reject":
+        if decision is Decision.REJECT:
             raise ActionRejected(
                 f"the caller rejected this action{f': {note}' if note else ''}. Find another way "
                 "or give up."
             )
-        if decision == "timeout":
+        if decision is Decision.TIMEOUT:
             raise RunAborted("nobody answered the confirmation request in time")
         raise RunAborted("the caller aborted this run")
-
-    # ---- finishing -------------------------------------------------------
 
     async def _finish(
         self, outcome: Outcome, *, result: Any = None, error: str | None = None
     ) -> None:
-        self.run.record.sources = list(self.session.visited_urls)
+        self.run.record.sources = list(self.session.visited_urls[self._source_offset :])
         await self.run.mark_finished(outcome, result=result, error=error)
         event = {
             Outcome.COMPLETED: "run.completed",

@@ -76,14 +76,14 @@ async def open_session(payload: OpenSessionRequest, request: Request) -> dict[st
             risky_url_patterns=payload.risky_url_patterns,
             auto_snapshot=payload.auto_snapshot,
         )
-    except Exception as exc:  # noqa: BLE001 - capacity and pressure are caller-visible
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"session_id": session.id}
 
 
 @router.get("/sessions")
 async def list_sessions(request: Request) -> dict[str, Any]:
-    return {"sessions": _container(request).pool.snapshot_state()}
+    return {"sessions": _container(request).pool.describe_sessions()}
 
 
 @router.delete("/sessions/{session_id}")
@@ -103,7 +103,7 @@ async def create_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         run = await container.runs.start(spec)
     except UnknownSessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - capacity and pressure are caller-visible
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"run_id": run.id, "status": run.record.status}
 

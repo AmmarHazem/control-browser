@@ -109,13 +109,25 @@ async def test_the_step_limit_fails_the_run(service, llm, site):
     assert record["steps"] == 3
 
 
-async def test_a_plain_text_answer_without_a_schema_completes_the_run(service, llm, site):
+async def test_bare_text_is_nudged_before_it_is_accepted_as_an_answer(service, llm, site):
+    llm.text("the answer is 42")
     llm.text("the answer is 42")
 
     record = await _run(service, {"task": "answer"})
 
     assert record["outcome"] == "completed"
     assert record["result"] == "the answer is 42"
+    assert any("done()" in json.dumps(request) for request in llm.requests)
+
+
+async def test_a_nudged_model_that_gives_up_fails_the_run(service, llm, site):
+    llm.text("I could not finish this, the form kept changing")
+    llm.give_up("the form kept rerendering")
+
+    record = await _run(service, {"task": "fill a hostile form"})
+
+    assert record["outcome"] == "failed"
+    assert record["error"] == "the form kept rerendering"
 
 
 async def test_a_run_can_be_aborted(service, llm, site):

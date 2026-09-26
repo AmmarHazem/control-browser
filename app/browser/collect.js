@@ -6,6 +6,7 @@
   let refCounter = startIndex;
   let frameCounter = 0;
   let nodeCount = 0;
+  const usedRefs = new Set();
 
   const INTERACTIVE_ROLES = new Set([
     'button', 'link', 'checkbox', 'radio', 'textbox', 'combobox', 'slider',
@@ -171,8 +172,12 @@
     nodeCount += 1;
 
     if (interactive) {
-      const ref = `e${refCounter++}`;
-      el.setAttribute('data-cb-ref', ref);
+      let ref = el.getAttribute('data-cb-ref');
+      if (!ref || usedRefs.has(ref)) {
+        ref = `e${refCounter++}`;
+        el.setAttribute('data-cb-ref', ref);
+      }
+      usedRefs.add(ref);
       node.ref = ref;
     }
     if (role === 'iframe') {

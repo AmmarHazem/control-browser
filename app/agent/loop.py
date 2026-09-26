@@ -179,18 +179,18 @@ class RunLoop:
         )
 
     async def _handle_no_tool_call(self, content: str) -> bool:
+        if not self._nudged:
+            self._nudged = True
+            self._messages.append({"role": "assistant", "content": content})
+            self._messages.append({"role": "user", "content": NUDGE})
+            return False
         if self.run.spec.output_schema is None and content.strip():
             await self._finish(Outcome.COMPLETED, result=content.strip())
             return True
-        if self._nudged:
-            await self._finish(
-                Outcome.FAILED, error="the model stopped without calling done() or give_up()"
-            )
-            return True
-        self._nudged = True
-        self._messages.append({"role": "assistant", "content": content})
-        self._messages.append({"role": "user", "content": NUDGE})
-        return False
+        await self._finish(
+            Outcome.FAILED, error="the model stopped without calling done() or give_up()"
+        )
+        return True
 
     def _build_tools(self) -> list[dict[str, Any]]:
         specs = tool_specs(include_search=self._search is not None)

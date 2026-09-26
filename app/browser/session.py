@@ -28,6 +28,7 @@ from app.policy.ratelimit import HostRateLimiter
 from app.policy.risky import RiskFinding, RiskSource, is_submit_control, matches_risky_url
 
 STALE_REF_HINT = "take a new snapshot and use a ref from it"
+_DOM_QUIET_MS = 350
 
 RiskGate = Callable[[RiskFinding, str, dict[str, Any]], Awaitable[None]]
 
@@ -68,6 +69,8 @@ class SessionLimits:
     snapshot_token_budget: int = 8000
     text_token_budget: int = 16000
     action_timeout_seconds: float = 30.0
+    settle_quiet_ms: float = 1500.0
+    keystroke_delay_ms: float = 25.0
 
 
 class Session:
@@ -328,12 +331,12 @@ class Session:
         page = await self.page()
         try:
             await locator.click(timeout=self.limits.action_timeout_seconds * 1000)
-        except PlaywrightTimeout:
-            return ActionResult(ok=False, error=f"clicking {ref} timed out")
+        except PlaywrightTimeout as exc:
+            return ActionResult(ok=False, error=_timeout_error(f"clicking {ref}", exc))
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"clicking {ref} failed: {_clean(exc)}")
 
-        await _settle(page)
+        await _settle(page, self.limits.settle_quiet_ms)
         return await self._finish(f"clicked {ref}")
 
     async def type_text(
@@ -357,21 +360,23 @@ class Session:
                     {"ref": ref},
                 )
 
+        timeout = self.limits.action_timeout_seconds * 1000
         try:
             if clear:
-                await locator.fill(text, timeout=self.limits.action_timeout_seconds * 1000)
-            else:
-                await locator.click(timeout=self.limits.action_timeout_seconds * 1000)
-                await locator.type(text, timeout=self.limits.action_timeout_seconds * 1000)
+                await locator.fill("", timeout=timeout)
+            await locator.click(timeout=timeout)
+            await locator.press_sequentially(
+                text, delay=self.limits.keystroke_delay_ms, timeout=timeout
+            )
             if press_enter:
-                await locator.press("Enter", timeout=self.limits.action_timeout_seconds * 1000)
-        except PlaywrightTimeout:
-            return ActionResult(ok=False, error=f"typing into {ref} timed out")
+                await locator.press("Enter", timeout=timeout)
+        except PlaywrightTimeout as exc:
+            return ActionResult(ok=False, error=_timeout_error(f"typing into {ref}", exc))
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"typing into {ref} failed: {_clean(exc)}")
 
         page = await self.page()
-        await _settle(page)
+        await _settle(page, self.limits.settle_quiet_ms)
         suffix = " and pressed Enter" if press_enter else ""
         return await self._finish(f"typed into {ref}{suffix}")
 
@@ -415,7 +420,7 @@ class Session:
             await page.keyboard.press(key)
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"pressing {key!r} failed: {_clean(exc)}")
-        await _settle(page)
+        await _settle(page, self.limits.settle_quiet_ms)
         return await self._finish(f"pressed {key!r}")
 
     async def scroll(self, direction: str = "down", ref: str | None = None) -> ActionResult:
@@ -460,7 +465,7 @@ class Session:
             await locator.click(timeout=self.limits.action_timeout_seconds * 1000)
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"submitting via {ref} failed: {_clean(exc)}")
-        await _settle(page)
+        await _settle(page, self.limits.settle_quiet_ms)
         return await self._finish(f"submitted via {ref} ({purpose})")
 
     async def wait_for(
@@ -606,7 +611,7 @@ class Session:
 
     async def _take_snapshot(self, *, mark_new: bool) -> RenderedSnapshot:
         page = await self.page()
-        await _settle(page)
+        await _settle(page, self.limits.settle_quiet_ms)
         payload, refs = await self._collect(page)
         nodes = parse_nodes(payload["nodes"])
         rendered = render_snapshot(
@@ -669,8 +674,37 @@ def _selector(ref: str) -> str:
     return f'[data-cb-ref="{ref}"]'
 
 
+_BLOCKED_HINTS = (
+    "intercepts pointer events",
+    "not visible",
+    "not enabled",
+    "not stable",
+    "outside of the viewport",
+    "resolved to",
+)
+
+
 def _clean(exc: Exception) -> str:
     return str(exc).splitlines()[0][:300]
+
+
+def _timeout_error(what: str, exc: Exception) -> str:
+    reason = _why_blocked(exc)
+    if reason:
+        return (
+            f"{what} timed out because the element {reason}. Something is probably covering it: "
+            "close any open dropdown or overlay, scroll it into view, or act on what is on top."
+        )
+    return f"{what} timed out"
+
+
+def _why_blocked(exc: Exception) -> str:
+    """Playwright puts the actionable reason in its call log, below the generic first line."""
+    for line in str(exc).splitlines()[1:]:
+        stripped = line.strip().lstrip("- ").strip()
+        if any(hint in stripped for hint in _BLOCKED_HINTS):
+            return stripped[:200]
+    return ""
 
 
 async def _safe_title(page: Page) -> str:
@@ -680,13 +714,34 @@ async def _safe_title(page: Page) -> str:
         return ""
 
 
-async def _settle(page: Page) -> None:
+_DOM_QUIET_JS = """
+([quiet, cap]) => new Promise((resolve) => {
+  let timer = null;
+  const observer = new MutationObserver(() => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(finish, quiet);
+  });
+  const finish = () => { observer.disconnect(); resolve(true); };
+  observer.observe(document, {
+    subtree: true, childList: true, attributes: true, characterData: true,
+  });
+  timer = setTimeout(finish, quiet);
+  setTimeout(() => { observer.disconnect(); resolve(false); }, cap);
+})
+"""
+
+
+async def _settle(page: Page, quiet_ms: float = 1500.0) -> None:
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=5000)
     except PlaywrightError:
         pass
     try:
-        await page.wait_for_timeout(120)
+        await page.wait_for_load_state("networkidle", timeout=quiet_ms)
+    except PlaywrightError:
+        pass
+    try:
+        await page.evaluate(_DOM_QUIET_JS, [_DOM_QUIET_MS, quiet_ms])
     except PlaywrightError:
         pass
 

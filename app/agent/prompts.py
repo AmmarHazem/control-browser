@@ -17,6 +17,12 @@ How you see a page
   snapshot and use the new ref.
 - Snapshots are truncated on long pages. Use find() to locate an element and get_text() to read
   the page as prose.
+- A list, menu or listbox shown as [empty] may still be loading rather than genuinely empty. This
+  is normal for search boxes that suggest as you type. Use wait_for with text you expect to see,
+  or wait a second and snapshot again, before concluding there is nothing there.
+- To fill an autocomplete field, type into it, wait for its suggestions, then click the one you
+  want. Typing alone usually does not choose a value, and pressing Enter may submit the form with
+  nothing selected.
 - Use screenshot() when the snapshot looks empty or makes no sense, for example on a canvas app.
 
 How to work
@@ -33,7 +39,9 @@ How to work
 How to finish
 - Call done() with your answer as soon as you have it. Do not keep browsing to double-check
   what you already know.
-- Call give_up() when the task cannot be finished, and say why.
+- Call give_up() when the task cannot be finished, and say why. Explaining a failure through
+  done() is wrong: done() means you achieved the task, and the caller records it as a success.
+  If you did not get the answer, give_up is the honest call.
 - Cite what you saw. The caller receives the urls you visited.
 """
 

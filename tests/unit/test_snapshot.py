@@ -158,3 +158,20 @@ def test_signatures_ignore_ref_identity():
 def test_only_referenced_elements_are_tracked_for_newness():
     out = render([{"role": "paragraph", "text": "hello"}])
     assert out.signatures == Counter()
+
+
+def test_a_container_with_nothing_in_it_is_marked_empty():
+    out = render([{"role": "listbox", "name": "Suggestions"}])
+    assert '- listbox "Suggestions" [empty]' in out.text.splitlines()
+
+
+def test_a_container_with_children_is_not_marked_empty():
+    out = render(
+        [{"role": "listbox", "children": [{"role": "option", "name": "Cairo", "ref": "e1"}]}]
+    )
+    assert "[empty]" not in out.text
+
+
+def test_a_leaf_element_is_never_marked_empty():
+    out = render([{"role": "button", "name": "Search", "ref": "e1"}])
+    assert "[empty]" not in out.text

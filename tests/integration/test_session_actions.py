@@ -290,3 +290,50 @@ def _ref_for(session, needle: str) -> str:
     line = _line_for(session._last_snapshot, needle)
     start = line.index("[ref=") + len("[ref=")
     return line[start : line.index("]", start)]
+
+
+async def test_refs_are_stable_across_snapshots_of_the_same_page(session, site):
+    first = await session.navigate(site.url("/form.html"))
+    before = _ref_for(session, 'textbox "Email"')
+
+    second = await session.snapshot()
+    after = _ref_for(session, 'textbox "Email"')
+
+    assert before == after
+    assert first.observation.count("[ref=") == second.observation.count("[ref=")
+
+
+async def test_a_ref_still_works_after_an_unrelated_action(session, site):
+    await session.navigate(site.url("/form.html"))
+    email = _ref_for(session, 'textbox "Email"')
+
+    await session.type_text(_ref_for(session, 'textbox "Full name"'), "Ada")
+    result = await session.type_text(email, "ada@example.test")
+
+    assert result.ok
+    assert '[value="ada@example.test"]' in result.observation
+
+
+async def test_a_new_page_does_not_reuse_the_previous_pages_refs(session, site):
+    await session.navigate(site.url("/form.html"))
+    before = set(_all_refs(session.last_snapshot))
+
+    await session.navigate(site.url("/modal.html"))
+    after = set(_all_refs(session.last_snapshot))
+
+    assert not (before & after)
+
+
+async def test_content_that_arrives_over_the_network_is_in_the_next_snapshot(session, site):
+    result = await session.navigate(site.url("/delayed.html"))
+
+    assert '- button "Late button" [ref=' in result.observation
+
+
+def _all_refs(snapshot: str) -> list[str]:
+    refs = []
+    for line in snapshot.splitlines():
+        if "[ref=" in line:
+            start = line.index("[ref=") + len("[ref=")
+            refs.append(line[start : line.index("]", start)])
+    return refs

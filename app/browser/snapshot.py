@@ -6,6 +6,10 @@ from pathlib import Path
 
 COLLECT_JS = (Path(__file__).parent / "collect.js").read_text(encoding="utf-8")
 
+EMPTY_CONTAINER_ROLES = frozenset(
+    {"listbox", "menu", "grid", "tree", "table", "list", "tabpanel", "dialog", "feed"}
+)
+
 TRUNCATION_TRAILER = (
     "- ... truncated at the snapshot budget. Scroll, use find(), or read the page with get_text()."
 )
@@ -121,6 +125,8 @@ def _render_node(
         parts.append(f"[options={','.join(node.options)}]")
     for state in node.states:
         parts.append(f"[{state}]")
+    if node.role in EMPTY_CONTAINER_ROLES and not node.children and not node.text:
+        parts.append("[empty]")
 
     if node.ref:
         signature = node.signature

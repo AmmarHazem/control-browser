@@ -33,20 +33,23 @@ async def run_case(client: httpx.AsyncClient, case: dict[str, Any], timeout: flo
         await asyncio.sleep(2)
 
     expect = case.get("expect", {})
-    result_text = json.dumps(record.get("result"))
-    outcome_ok = record.get("outcome") == expect.get("outcome")
-    contains_ok = all(
-        needle.lower() in result_text.lower() for needle in expect.get("contains", [])
+    result_text = json.dumps(record.get("result")).lower()
+    accepted = expect.get("outcome")
+    accepted = [accepted] if isinstance(accepted, str) else list(accepted or [])
+    outcome_ok = record.get("outcome") in accepted
+    contains_ok = all(needle.lower() in result_text for needle in expect.get("contains", []))
+    excludes_ok = all(
+        needle.lower() not in result_text for needle in expect.get("not_contains", [])
     )
 
     return {
         "name": case["name"],
         "run_id": run_id,
         "outcome": record.get("outcome"),
-        "expected": expect.get("outcome"),
+        "expected": "|".join(accepted),
         "steps": record.get("steps"),
         "seconds": round(time.monotonic() - started, 1),
-        "passed": outcome_ok and contains_ok,
+        "passed": outcome_ok and contains_ok and excludes_ok,
         "result": record.get("result"),
     }
 

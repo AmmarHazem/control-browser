@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Remount</title></head>
+<body>
+<h1>Remount</h1>
+<div id="form"></div>
+<script>
+  function render(picked) {
+    const form = document.getElementById('form');
+    form.innerHTML = '';
+    const origin = document.createElement('button');
+    origin.textContent = picked ? 'Origin: ' + picked : 'Choose origin';
+    origin.onclick = () => render('Cairo');
+    const destination = document.createElement('input');
+    destination.setAttribute('aria-label', 'Destination');
+    form.append(origin, destination);
+  }
+  render(null);
+</script>
+</body>
+</html>

@@ -337,3 +337,59 @@ def _all_refs(snapshot: str) -> list[str]:
             start = line.index("[ref=") + len("[ref=")
             refs.append(line[start : line.index("]", start)])
     return refs
+
+
+async def test_options_wrapped_in_presentational_divs_are_visible(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert '- option "Cairo" [ref=' in result.observation
+    assert '- option "Dubai" [ref=' in result.observation
+    assert "presentation" not in result.observation
+
+
+async def test_an_element_inside_a_display_contents_wrapper_is_visible(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert '- button "Inside display contents" [ref=' in result.observation
+
+
+async def test_a_visible_child_of_a_hidden_parent_is_visible(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert '- button "Visible inside hidden" [ref=' in result.observation
+    assert "Hidden wrapper text" not in result.observation
+
+
+async def test_a_transparent_custom_styled_checkbox_is_visible(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert '- checkbox "Styled checkbox" [ref=' in result.observation
+
+
+async def test_a_hidden_input_never_appears(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert "secret-token" not in result.observation
+    assert "csrf" not in result.observation
+
+
+async def test_a_button_inside_an_open_shadow_root_can_be_seen_and_clicked(session, site):
+    await session.navigate(site.url("/widgets.html"))
+    ref = _ref_for(session, 'button "Shadow button"')
+
+    result = await session.click(ref)
+
+    assert result.ok
+    assert '- button "Shadow clicked"' in result.observation
+
+
+async def test_an_element_rebuilt_by_the_page_keeps_its_ref(session, site):
+    await session.navigate(site.url("/remount.html"))
+    destination = _ref_for(session, 'textbox "Destination"')
+
+    await session.click(_ref_for(session, 'button "Choose origin"'))
+    result = await session.type_text(destination, "Dubai")
+
+    assert result.ok
+    assert _ref_for(session, 'textbox "Destination"') == destination
+    assert '[value="Dubai"]' in result.observation

@@ -47,7 +47,8 @@ class SessionPool:
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
-            headless=self._settings.browser_headless
+            executable_path=self._playwright.chromium.executable_path,
+            headless=self._settings.browser_headless,
         )
         self._user_agent = self._settings.browser_user_agent or await self._ordinary_user_agent()
         self._janitor = asyncio.create_task(self._janitor_loop())

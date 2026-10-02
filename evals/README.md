@@ -56,3 +56,31 @@ Two cases were wrong rather than the agent:
   better answer than giving up. It is now **`absent-information`**, accepts either Outcome, and
   asserts through `not_contains` that no figure was invented — which is what the case was really
   guarding against.
+
+## Real booking sites, 2026-10-02
+
+`gpt-5.4-mini`, `max_steps=30`. Three sites a user reported failing the same way: the agent could
+not see a dropdown the user could see opening in the browser.
+
+The cause was in the snapshot collector, not the sites. `role="none"` and `role="presentation"`
+mean "drop this element's own semantics and keep its children", but the collector dropped the
+whole subtree. Component libraries wrap listbox and menu contents in exactly those elements, so
+every suggestion list built that way rendered as an empty `listbox`. Three smaller visibility rules
+had the same shape: a `display: contents` wrapper, a `visibility: hidden` parent with a visible
+child, and an `opacity: 0` styled checkbox each took visible content down with them. Open shadow
+roots were not walked at all.
+
+| Case | Before | After |
+|---|---|---|
+| `wego-flight` | could not see the suggestions | **passes** — AED 486, Jazeera Airways, 18 steps |
+| `wingie-flight` | could not see the suggestions | selects both cities through their autocompletes, then gives up inside the date picker |
+| `vox-showtimes` | page never loaded | loads, finds the film, then the site refuses the next request |
+
+**Vox is blocked deliberately.** Its first page loads; every later navigation fails with
+`ERR_HTTP2_PROTOCOL_ERROR`, headless or headed, with or without the request guard. It is detecting
+an automated Chrome, and getting past that would mean faking automation fingerprints, which this
+service does not do. The case is left strict so it stays visible as a known failure.
+
+**Wingie's date picker is the open problem.** Trace events keep only the first 2,000 characters of
+each observation, and the calendar renders at the end of the page, so the stored Trace does not
+show what the model saw. Raise that limit before debugging it further.

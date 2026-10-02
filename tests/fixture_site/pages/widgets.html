@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Widgets</title>
+<style>
+  .contents { display: contents; }
+  .ghost { visibility: hidden; }
+  .ghost .shown { visibility: visible; }
+  .styled-check { opacity: 0; position: absolute; }
+</style>
+</head>
+<body>
+<h1>Widgets</h1>
+
+<label for="city">City</label>
+<input id="city" role="combobox" aria-expanded="true" aria-controls="city-list">
+<ul id="city-list" role="listbox" aria-label="City suggestions">
+  <div role="none"><div role="presentation">
+    <li role="option" id="opt-cairo">Cairo</li>
+    <li role="option" id="opt-dubai">Dubai</li>
+  </div></div>
+</ul>
+
+<div class="contents"><button id="in-contents">Inside display contents</button></div>
+
+<div class="ghost">Hidden wrapper text<button class="shown" id="in-ghost">Visible inside hidden</button></div>
+
+<label><input type="checkbox" class="styled-check" id="styled">Styled checkbox</label>
+
+<input type="hidden" name="csrf" value="secret-token">
+
+<shadow-card></shadow-card>
+<script>
+  customElements.define('shadow-card', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="shadow-btn" onclick="this.textContent=\'Shadow clicked\'">Shadow button</button>';
+    }
+  });
+</script>
+</body>
+</html>

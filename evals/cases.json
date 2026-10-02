@@ -116,5 +116,35 @@
       "outcome": "blocked",
       "contains": []
     }
+  },
+  {
+    "name": "wingie-flight",
+    "task": "Go to https://www.wingie.ae/en/ and find the cheapest one-way flight from Abu Dhabi to Cairo departing 3 days from today. Report the price and airline.",
+    "expect": {
+      "outcome": "completed",
+      "contains": [
+        "AED"
+      ]
+    }
+  },
+  {
+    "name": "wego-flight",
+    "task": "Go to https://www.wego.ae/en and find the cheapest one-way flight from Dubai to Cairo departing 3 days from today. Report the price and airline.",
+    "expect": {
+      "outcome": "completed",
+      "contains": [
+        "AED"
+      ]
+    }
+  },
+  {
+    "name": "vox-showtimes",
+    "task": "On https://uae.voxcinemas.com/ tell me the show times for the film The Odyssey tomorrow at the Galleria mall cinema.",
+    "expect": {
+      "outcome": "completed",
+      "contains": [
+        "Galleria"
+      ]
+    }
   }
 ]

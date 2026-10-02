@@ -62,6 +62,7 @@ class ActionResult:
 class RefTarget:
     frame: Frame
     ref: str
+    signature: str = ""
 
 
 @dataclass
@@ -570,6 +571,13 @@ class Session:
         self._pending_dialogs.clear()
         return dialogs
 
+    def _previous_signatures(self, frame: Frame) -> dict[str, list[str]]:
+        by_signature: dict[str, list[str]] = {}
+        for ref, target in self._refs.items():
+            if target.frame is frame and target.signature:
+                by_signature.setdefault(target.signature, []).append(ref)
+        return by_signature
+
     def _record_source(self, url: str) -> None:
         if not url or url == "about:blank":
             return
@@ -640,11 +648,13 @@ class Session:
     async def _collect_frame(
         self, frame: Frame, start_ref: int, refs: dict[str, RefTarget]
     ) -> tuple[dict, int]:
-        payload = await frame.evaluate(COLLECT_JS, start_ref)
+        payload = await frame.evaluate(
+            COLLECT_JS, {"start": start_ref, "previous": self._previous_signatures(frame)}
+        )
         nodes = parse_nodes(payload["nodes"])
         for node in iter_nodes(nodes):
             if node.ref:
-                refs[node.ref] = RefTarget(frame=frame, ref=node.ref)
+                refs[node.ref] = RefTarget(frame=frame, ref=node.ref, signature=node.signature)
         next_ref = int(payload.get("nextRef") or start_ref)
         next_ref = await self._attach_child_frames(frame, nodes, refs, next_ref)
         payload["nodes"] = [_to_dict(node) for node in nodes]

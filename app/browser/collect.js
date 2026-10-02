@@ -1,4 +1,8 @@
-(startIndex) => {
+(args) => {
+  const startIndex = args.start;
+  const sameDocument = document.__cbCollected === true;
+  document.__cbCollected = true;
+  const previous = sameDocument ? args.previous || {} : {};
   const MAX_NAME = 120;
   const MAX_TEXT = 300;
   const MAX_NODES = 4000;
@@ -7,6 +11,15 @@
   let frameCounter = 0;
   let nodeCount = 0;
   const usedRefs = new Set();
+
+  const healedRef = (signature) => {
+    for (const candidate of previous[signature] || []) {
+      if (usedRefs.has(candidate)) continue;
+      if (document.querySelector(`[data-cb-ref="${candidate}"]`)) continue;
+      return candidate;
+    }
+    return null;
+  };
 
   const INTERACTIVE_ROLES = new Set([
     'button', 'link', 'checkbox', 'radio', 'textbox', 'combobox', 'slider',
@@ -35,16 +48,30 @@
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
-  const isHidden = (el) => {
-    if (el.hasAttribute('hidden')) return true;
-    if (el.getAttribute('aria-hidden') === 'true') return true;
+  const visibilityOf = (el) => {
     const style = el.ownerDocument.defaultView.getComputedStyle(el);
-    if (!style) return false;
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-      return true;
+    if (!style) return 'show';
+    if (style.display === 'none') return 'prune';
+    if (el.getAttribute('aria-hidden') === 'true') return 'prune';
+    if (style.display === 'contents') return 'skip';
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return 'skip';
+    if (el.tagName !== 'OPTION' && el.getClientRects().length === 0) return 'skip';
+    return 'show';
+  };
+
+  const childElementsOf = (el) => {
+    if (el.tagName === 'SLOT') {
+      const assigned = el.assignedElements ? el.assignedElements({ flatten: true }) : [];
+      return assigned.length ? assigned : Array.from(el.children);
     }
-    if (el.tagName !== 'OPTION' && el.getClientRects().length === 0) return true;
-    return false;
+    if (el.shadowRoot) return Array.from(el.shadowRoot.children);
+    return Array.from(el.children);
+  };
+
+  const visitChildren = (el) => {
+    const out = [];
+    for (const child of childElementsOf(el)) out.push(...visit(child));
+    return out;
   };
 
   const roleOf = (el) => {
@@ -157,29 +184,23 @@
   };
 
   const visit = (el) => {
-    if (nodeCount >= MAX_NODES) return null;
-    if (isHidden(el)) return null;
+    if (nodeCount >= MAX_NODES) return [];
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') {
-      return null;
+      return [];
     }
+    const visibility = visibilityOf(el);
+    if (visibility === 'prune') return [];
+    if (visibility === 'skip') return visitChildren(el);
 
-    const role = roleOf(el);
-    if (role === 'none') return null;
+    if (tag === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'hidden') return [];
+    let role = roleOf(el);
+    if (role === 'none' || role === 'presentation') role = 'generic';
     const interactive = INTERACTIVE_ROLES.has(role);
 
     const node = { role, children: [] };
     nodeCount += 1;
 
-    if (interactive) {
-      let ref = el.getAttribute('data-cb-ref');
-      if (!ref || usedRefs.has(ref)) {
-        ref = `e${refCounter++}`;
-        el.setAttribute('data-cb-ref', ref);
-      }
-      usedRefs.add(ref);
-      node.ref = ref;
-    }
     if (role === 'iframe') {
       const key = `f${frameCounter++}`;
       el.setAttribute('data-cb-frame', key);
@@ -187,6 +208,15 @@
     }
 
     node.name = nameOf(el, role);
+    if (interactive) {
+      let ref = el.getAttribute('data-cb-ref');
+      if (!ref || usedRefs.has(ref)) {
+        ref = healedRef(`${role}|${node.name}`) || `e${refCounter++}`;
+        el.setAttribute('data-cb-ref', ref);
+      }
+      usedRefs.add(ref);
+      node.ref = ref;
+    }
     if (role === 'heading') node.level = Number(tag.slice(1)) || Number(el.getAttribute('aria-level')) || 0;
     if (role === 'textbox' || role === 'searchbox') {
       const v = el.value || '';
@@ -204,23 +234,16 @@
     if (!leaf) {
       const direct = tag === 'LABEL' ? '' : ownText(el);
       if (direct) node.text = clip(direct, MAX_TEXT);
-      for (const child of el.children) {
-        const c = visit(child);
-        if (c) node.children.push(c);
-      }
-      if (role === 'generic' && !node.text && node.children.length === 0) return null;
-      if (role === 'generic' && !node.text && node.children.length === 1) return node.children[0];
+      node.children = visitChildren(el);
+      if (role === 'generic' && !node.text && node.children.length <= 1) return node.children;
     }
-    return node;
+    return [node];
   };
 
   const roots = [];
   const body = document.body;
   if (body) {
-    for (const child of body.children) {
-      const n = visit(child);
-      if (n) roots.push(n);
-    }
+    roots.push(...visitChildren(body));
   }
 
   const doc = document.documentElement;

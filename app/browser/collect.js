@@ -183,6 +183,55 @@
     return states;
   };
 
+  const VALUELESS_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'file']);
+
+  const valueOf = (el) => {
+    if (el.tagName === 'SELECT') {
+      const opt = el.selectedOptions && el.selectedOptions[0];
+      return opt ? clip(collapse(opt.textContent || opt.value), MAX_NAME) : '';
+    }
+    if (el.tagName === 'TEXTAREA') return clip(collapse(el.value || ''), MAX_NAME);
+    if (el.tagName !== 'INPUT') return '';
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (VALUELESS_INPUTS.has(type) || !el.value) return '';
+    if (type === 'password') return '\u2022'.repeat(Math.min(el.value.length, 8));
+    return clip(collapse(el.value), MAX_NAME);
+  };
+
+  const assignRef = (el, role, name) => {
+    let ref = el.getAttribute('data-cb-ref');
+    if (!ref || usedRefs.has(ref)) {
+      ref = healedRef(`${role}|${name}`) || `e${refCounter++}`;
+      el.setAttribute('data-cb-ref', ref);
+    }
+    usedRefs.add(ref);
+    return ref;
+  };
+
+  const descriptionOf = (el, name) => {
+    const source = el.getAttribute('aria-description') || el.getAttribute('title');
+    const text = collapse(source || '');
+    if (!text || text === name || name.includes(text)) return '';
+    return clip(text, MAX_NAME);
+  };
+
+  const labelStandingInForControl = (el) => {
+    if (el.tagName !== 'LABEL') return null;
+    const control = el.control;
+    if (!control || control.tagName !== 'INPUT') return null;
+    if ((control.getAttribute('type') || '').toLowerCase() === 'hidden') return null;
+    if (visibilityOf(control) === 'show') return null;
+    const role = roleOf(control);
+    if (!INTERACTIVE_ROLES.has(role)) return null;
+    nodeCount += 1;
+    const name = clip(collapse(el.textContent), MAX_NAME);
+    const node = { role, name, children: [] };
+    node.ref = assignRef(el, role, name);
+    const states = statesOf(control, role);
+    if (states.length) node.states = states;
+    return node;
+  };
+
   const visit = (el) => {
     if (nodeCount >= MAX_NODES) return [];
     const tag = el.tagName;
@@ -194,6 +243,8 @@
     if (visibility === 'skip') return visitChildren(el);
 
     if (tag === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'hidden') return [];
+    const proxied = labelStandingInForControl(el);
+    if (proxied) return [proxied];
     let role = roleOf(el);
     if (role === 'none' || role === 'presentation') role = 'generic';
     const interactive = INTERACTIVE_ROLES.has(role);
@@ -208,23 +259,13 @@
     }
 
     node.name = nameOf(el, role);
-    if (interactive) {
-      let ref = el.getAttribute('data-cb-ref');
-      if (!ref || usedRefs.has(ref)) {
-        ref = healedRef(`${role}|${node.name}`) || `e${refCounter++}`;
-        el.setAttribute('data-cb-ref', ref);
-      }
-      usedRefs.add(ref);
-      node.ref = ref;
-    }
+    if (interactive) node.ref = assignRef(el, role, node.name);
+    const description = descriptionOf(el, node.name);
+    if (description) node.description = description;
     if (role === 'heading') node.level = Number(tag.slice(1)) || Number(el.getAttribute('aria-level')) || 0;
-    if (role === 'textbox' || role === 'searchbox') {
-      const v = el.value || '';
-      if (v) node.value = clip(collapse(v), MAX_NAME);
-    }
-    if (role === 'combobox' || role === 'listbox') {
-      const opt = el.selectedOptions && el.selectedOptions[0];
-      if (opt) node.value = clip(collapse(opt.textContent || opt.value), MAX_NAME);
+    const value = valueOf(el);
+    if (value) node.value = value;
+    if (tag === 'SELECT') {
       node.options = Array.from(el.options || []).slice(0, 30).map((o) => o.value);
     }
     const states = statesOf(el, role);

@@ -13,7 +13,6 @@ from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolPara
 
 from app.agent.prompts import DONE_TOOL, GIVE_UP_TOOL, build_messages
 from app.agent.run import (
-    EVENT_OBSERVATION_LIMIT,
     Autonomy,
     Decision,
     Outcome,
@@ -268,7 +267,7 @@ class RunLoop:
         if result.observation is not None:
             await self.run.emit(
                 "observation",
-                {"step": self._step, "text": result.observation[:EVENT_OBSERVATION_LIMIT]},
+                {"step": self._step, "text": result.observation},
             )
         if result.screenshot and self._screenshots and self.run.spec.store_screenshots:
             await self._screenshots.save(self.run.id, self._step, result.screenshot)

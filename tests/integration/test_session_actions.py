@@ -393,3 +393,62 @@ async def test_an_element_rebuilt_by_the_page_keeps_its_ref(session, site):
     assert result.ok
     assert _ref_for(session, 'textbox "Destination"') == destination
     assert '[value="Dubai"]' in result.observation
+
+
+async def test_a_label_stands_in_for_its_hidden_radio(session, site):
+    await session.navigate(site.url("/widgets.html"))
+    assert '- radio "One Way" [ref=' in session.last_snapshot
+    assert "[unchecked]" in _line_for(session.last_snapshot, 'radio "One Way"')
+
+    result = await session.click(_ref_for(session, 'radio "One Way"'))
+
+    assert result.ok
+    assert "[checked]" in _line_for(result.observation, 'radio "One Way"')
+    assert "[unchecked]" in _line_for(result.observation, 'radio "Round Trip"')
+
+
+async def test_a_title_that_adds_information_is_shown_as_a_description(session, site):
+    result = await session.navigate(site.url("/widgets.html"))
+
+    assert '- button "7" [ref=' in result.observation
+    assert '[description="2026-10-07"]' in result.observation
+    assert '[description="2026-11-07"]' in result.observation
+
+
+async def test_every_interactive_element_on_the_fixture_pages_is_reachable(session, site):
+    from app.browser.coverage import find_unreachable
+
+    for page in ("index.html", "form.html", "modal.html", "widgets.html", "checkout.html"):
+        await session.navigate(site.url(f"/{page}"))
+        unreachable = await find_unreachable(session)
+        assert unreachable == [], f"{page}: {unreachable}"
+
+
+async def test_a_combobox_input_shows_its_current_value(session, site):
+    await session.navigate(site.url("/widgets.html"))
+
+    result = await session.type_text(_ref_for(session, 'combobox "City"'), "Cai")
+
+    assert '[value="Cai"]' in _line_for(result.observation, 'combobox "City"')
+
+
+async def test_a_password_is_never_echoed_into_the_snapshot(session, site):
+    await session.navigate(site.url("/widgets.html"))
+
+    result = await session.type_text(_ref_for(session, 'textbox "Password"'), "hunter2")
+
+    assert "hunter2" not in result.observation
+    assert "[value=" in _line_for(result.observation, 'textbox "Password"')
+
+
+async def test_a_covered_button_fails_fast_and_says_why(session, site):
+    import time
+
+    await session.navigate(site.url("/widgets.html"))
+    started = time.monotonic()
+
+    result = await session.click(_ref_for(session, 'button "Under the shield"'))
+
+    assert not result.ok
+    assert "intercepts pointer events" in result.error
+    assert time.monotonic() - started < 15

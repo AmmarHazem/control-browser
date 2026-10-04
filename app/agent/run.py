@@ -9,8 +9,6 @@ from typing import Any
 
 from app.storage.repository import RunRecord, TraceEvent
 
-EVENT_OBSERVATION_LIMIT = 2000
-
 
 class Autonomy(StrEnum):
     AUTONOMOUS = "autonomous"
@@ -187,5 +185,5 @@ class Run:
             "action": self.pending.action,
             "purpose": self.pending.purpose,
             "source": self.pending.source,
-            "snapshot": self.pending.snapshot[:EVENT_OBSERVATION_LIMIT],
+            "snapshot": self.pending.snapshot,
         }

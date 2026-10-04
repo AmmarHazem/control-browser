@@ -154,3 +154,26 @@ class TestLimitClamping:
     def test_a_non_positive_request_takes_the_default(self):
         assert clamp_limit(0, default=50, cap=200) == 50
         assert clamp_limit(-3, default=50, cap=200) == 50
+
+
+class TestUnresolvableHosts:
+    async def test_a_host_that_does_not_resolve_is_not_refused(self, monkeypatch):
+        from app.policy import network
+
+        async def fail(host, port):
+            raise OSError("nodename nor servname provided")
+
+        monkeypatch.setattr(network, "resolve_addresses", fail)
+
+        await network.check_url("https://challenges.example.test/", network.DomainPolicy())
+
+    async def test_a_host_that_resolves_inside_is_still_refused(self, monkeypatch):
+        from app.policy import network
+
+        async def internal(host, port):
+            return ["169.254.169.254"]
+
+        monkeypatch.setattr(network, "resolve_addresses", internal)
+
+        with pytest.raises(network.NetworkPolicyError):
+            await network.check_url("https://metadata.example.test/", network.DomainPolicy())

@@ -86,8 +86,8 @@ async def check_url(url: str, policy: DomainPolicy, *, allow_private: bool = Fal
 
     try:
         addresses = await resolve_addresses(host, port)
-    except OSError as exc:
-        raise NetworkPolicyError(f"{host} could not be resolved: {exc}") from exc
+    except OSError:
+        return
 
     for address in addresses:
         if is_blocked_address(address):

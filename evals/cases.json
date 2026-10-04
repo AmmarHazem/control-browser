@@ -123,7 +123,44 @@
     "expect": {
       "outcome": "completed",
       "contains": [
-        "AED"
+        "Cairo",
+        "{date+3:%Y-%m-%d}"
+      ],
+      "sources_contain": [
+        "/flights/search/abu-dhabi-to-cairo",
+        "departure={date+3:%d.%m.%Y}"
+      ]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "price": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "airline": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "departure_date": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        }
+      },
+      "required": [
+        "price",
+        "currency",
+        "airline",
+        "origin",
+        "destination",
+        "departure_date"
       ]
     }
   },
@@ -133,7 +170,40 @@
     "expect": {
       "outcome": "completed",
       "contains": [
-        "AED"
+        "Cairo",
+        "{date+3:%Y-%m-%d}"
+      ]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "price": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "airline": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "departure_date": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        }
+      },
+      "required": [
+        "price",
+        "currency",
+        "airline",
+        "origin",
+        "destination",
+        "departure_date"
       ]
     }
   },

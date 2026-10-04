@@ -70,6 +70,7 @@ class SessionLimits:
     snapshot_token_budget: int = 8000
     text_token_budget: int = 16000
     action_timeout_seconds: float = 30.0
+    interaction_timeout_seconds: float = 6.0
     settle_quiet_ms: float = 1500.0
     keystroke_delay_ms: float = 25.0
 
@@ -331,7 +332,7 @@ class Session:
 
         page = await self.page()
         try:
-            await locator.click(timeout=self.limits.action_timeout_seconds * 1000)
+            await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
         except PlaywrightTimeout as exc:
             return ActionResult(ok=False, error=_timeout_error(f"clicking {ref}", exc))
         except PlaywrightError as exc:
@@ -361,7 +362,7 @@ class Session:
                     {"ref": ref},
                 )
 
-        timeout = self.limits.action_timeout_seconds * 1000
+        timeout = self.limits.interaction_timeout_seconds * 1000
         try:
             if clear:
                 await locator.fill("", timeout=timeout)
@@ -389,12 +390,12 @@ class Session:
         assert locator is not None
         try:
             await locator.select_option(
-                value=value, timeout=self.limits.action_timeout_seconds * 1000
+                value=value, timeout=self.limits.interaction_timeout_seconds * 1000
             )
         except PlaywrightError:
             try:
                 await locator.select_option(
-                    label=value, timeout=self.limits.action_timeout_seconds * 1000
+                    label=value, timeout=self.limits.interaction_timeout_seconds * 1000
                 )
             except PlaywrightError as exc:
                 return ActionResult(
@@ -409,7 +410,7 @@ class Session:
             return error
         assert locator is not None
         try:
-            await locator.hover(timeout=self.limits.action_timeout_seconds * 1000)
+            await locator.hover(timeout=self.limits.interaction_timeout_seconds * 1000)
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"hovering {ref} failed: {_clean(exc)}")
         return await self._finish(f"hovered {ref}")
@@ -434,7 +435,7 @@ class Session:
             assert locator is not None
             try:
                 await locator.scroll_into_view_if_needed(
-                    timeout=self.limits.action_timeout_seconds * 1000
+                    timeout=self.limits.interaction_timeout_seconds * 1000
                 )
             except PlaywrightError as exc:
                 return ActionResult(ok=False, error=f"scrolling to {ref} failed: {_clean(exc)}")
@@ -463,7 +464,7 @@ class Session:
         assert locator is not None
         page = await self.page()
         try:
-            await locator.click(timeout=self.limits.action_timeout_seconds * 1000)
+            await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
         except PlaywrightError as exc:
             return ActionResult(ok=False, error=f"submitting via {ref} failed: {_clean(exc)}")
         await _settle(page, self.limits.settle_quiet_ms)
@@ -688,9 +689,10 @@ _BLOCKED_HINTS = (
     "intercepts pointer events",
     "not visible",
     "not enabled",
+    "not editable",
     "not stable",
     "outside of the viewport",
-    "resolved to",
+    "detached from the dom",
 )
 
 
@@ -796,6 +798,8 @@ def _to_dict(node: SnapNode) -> dict[str, Any]:
         payload["level"] = node.level
     if node.value is not None:
         payload["value"] = node.value
+    if node.description:
+        payload["description"] = node.description
     if node.options:
         payload["options"] = node.options
     if node.states:

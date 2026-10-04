@@ -5,13 +5,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 CASES = Path(__file__).parent / "cases.json"
+DATE_TOKEN = re.compile(r"\{date([+-]\d+)?:([^}]+)\}")
+
+
+def expand(text: str) -> str:
+    """Expand {date+3:%Y-%m-%d} into a date relative to today, so expectations can be exact."""
+
+    def render(match: re.Match[str]) -> str:
+        offset = int(match.group(1) or 0)
+        return (date.today() + timedelta(days=offset)).strftime(match.group(2))
+
+    return DATE_TOKEN.sub(render, text)
 
 
 async def run_case(client: httpx.AsyncClient, case: dict[str, Any], timeout: float) -> dict:
@@ -37,9 +50,16 @@ async def run_case(client: httpx.AsyncClient, case: dict[str, Any], timeout: flo
     accepted = expect.get("outcome")
     accepted = [accepted] if isinstance(accepted, str) else list(accepted or [])
     outcome_ok = record.get("outcome") in accepted
-    contains_ok = all(needle.lower() in result_text for needle in expect.get("contains", []))
+    contains_ok = all(
+        expand(needle).lower() in result_text for needle in expect.get("contains", [])
+    )
     excludes_ok = all(
-        needle.lower() not in result_text for needle in expect.get("not_contains", [])
+        expand(needle).lower() not in result_text for needle in expect.get("not_contains", [])
+    )
+    sources = [url.lower() for url in record.get("sources") or []]
+    sources_ok = all(
+        any(expand(needle).lower() in url for url in sources)
+        for needle in expect.get("sources_contain", [])
     )
 
     return {
@@ -49,7 +69,7 @@ async def run_case(client: httpx.AsyncClient, case: dict[str, Any], timeout: flo
         "expected": "|".join(accepted),
         "steps": record.get("steps"),
         "seconds": round(time.monotonic() - started, 1),
-        "passed": outcome_ok and contains_ok and excludes_ok,
+        "passed": outcome_ok and contains_ok and excludes_ok and sources_ok,
         "result": record.get("result"),
     }
 

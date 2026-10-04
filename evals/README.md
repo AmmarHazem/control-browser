@@ -72,7 +72,7 @@ roots were not walked at all.
 
 | Case | Before | After |
 |---|---|---|
-| `wego-flight` | could not see the suggestions | **passes** — AED 486, Jazeera Airways, 18 steps |
+| `wego-flight` | could not see the suggestions | reported as passing at the time — see the correction below |
 | `wingie-flight` | could not see the suggestions | selects both cities through their autocompletes, then gives up inside the date picker |
 | `vox-showtimes` | page never loaded | loads, finds the film, then the site refuses the next request |
 
@@ -84,3 +84,34 @@ service does not do. The case is left strict so it stays visible as a known fail
 **Wingie's date picker is the open problem.** Trace events keep only the first 2,000 characters of
 each observation, and the calendar renders at the end of the page, so the stored Trace does not
 show what the model saw. Raise that limit before debugging it further.
+
+## Strict flight checks, 2026-10-04
+
+**Correction.** The `wego-flight` pass recorded above was not real. That run's sources contain only
+the homepage, so its answer came from promotional content, not a search; the case only checked that
+the result contained "AED", which any price on any page satisfies. A run on Wingie passed the same
+way, quoting a homepage deal for Abu Dhabi to Aleppo as the cheapest fare to Cairo.
+
+The flight cases now ask for a structured result and check what cannot be faked: the departure date
+must be today plus three days, and Wingie's case requires the visited urls to include its real
+search-results route with that date. Dates in expectations are written as `{date+3:%Y-%m-%d}`;
+`sources_contain` checks visited urls.
+
+What the strict runs show:
+
+- **The agent now operates both search forms.** Picking origin and destination from autocompletes,
+  opening the date picker and submitting all work, and it lands on each site's results route. Five
+  collector bugs stood between it and that, found with `scripts/inspect_page.py`: a label whose
+  native radio is hidden was not clickable, calendar days were all named by bare numbers with two
+  months on screen, a combobox `<input>` never showed its value so the agent could not see its own
+  selections, a blocked click waited the full 30 seconds and reported the wrong line of Playwright's
+  log, and the request guard refused hosts it merely failed to resolve — which included Cloudflare's
+  own verification script.
+- **Neither site will serve results to an automated browser.** Wingie stays on Cloudflare's
+  "Just a moment…" verification indefinitely, headless or headed, with or without the request guard.
+  Wego's results page loads but its search API answers 403. As with Vox, getting past either means
+  faking automation fingerprints, which this service does not do; all runs from this machine today
+  shared one IP, so rate-limiting may contribute on Wego.
+- **The model picks the wrong date** even with today's date in the prompt: it submitted today or
+  tomorrow instead of three days out. That is model quality on `gpt-5.4-mini`, now caught by the
+  date check rather than passed.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 SYSTEM_PROMPT = """\
@@ -29,7 +30,9 @@ How to work
 - Dismiss cookie and consent banners before anything else; they block the page.
 - Prefer search() to start research. Only browse a search engine if search() is unavailable.
 - Read before acting: check that the element you are about to use is the one you mean.
-- After typing into a form, confirm the value appears in the next snapshot before submitting.
+- Before submitting a form, set every field the task specifies, including dates, and check that
+  each one shows the value you meant in the snapshot. A field you did not set keeps the site's
+  default, which is rarely what the task asked for.
 - Use submit(ref, purpose) instead of click(ref) for anything with a real-world effect:
   placing an order, sending a message, deleting data, confirming a booking. Say plainly what the
   submission does. The caller may be asked to approve it.
@@ -46,8 +49,15 @@ How to finish
 """
 
 
-def build_messages(task: str, output_schema: dict[str, Any] | None) -> list[dict[str, Any]]:
-    system = SYSTEM_PROMPT
+def build_messages(
+    task: str, output_schema: dict[str, Any] | None, *, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    moment = now or datetime.now().astimezone()
+    system = SYSTEM_PROMPT + (
+        f"\nToday is {moment:%A %d %B %Y}, and the time is {moment:%H:%M} ({moment:%Z}). "
+        "Work out relative dates such as tomorrow or in three days from this, not from the "
+        "page.\n"
+    )
     if output_schema:
         system += (
             "\nThe result you pass to done() must be a JSON object matching this schema:\n"

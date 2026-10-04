@@ -27,6 +27,7 @@ class SnapNode:
     frame_key: str | None = None
     level: int | None = None
     value: str | None = None
+    description: str | None = None
     options: list[str] = field(default_factory=list)
     states: list[str] = field(default_factory=list)
     text: str | None = None
@@ -56,6 +57,7 @@ def _parse_node(item: dict) -> SnapNode:
         frame_key=item.get("frameKey"),
         level=item.get("level"),
         value=item.get("value"),
+        description=item.get("description"),
         options=list(item.get("options") or []),
         states=list(item.get("states") or []),
         text=item.get("text"),
@@ -121,6 +123,8 @@ def _render_node(
         parts.append(f"[ref={node.ref}]")
     if node.value is not None:
         parts.append(f'[value="{node.value}"]')
+    if node.description:
+        parts.append(f'[description="{node.description}"]')
     if node.options:
         parts.append(f"[options={','.join(node.options)}]")
     for state in node.states:

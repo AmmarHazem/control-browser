@@ -6,6 +6,9 @@
   .ghost { visibility: hidden; }
   .ghost .shown { visibility: visible; }
   .styled-check { opacity: 0; position: absolute; }
+  .native-hidden { visibility: hidden; position: absolute; }
+  .covered-zone { position: relative; width: 200px; height: 40px; }
+  .shield { position: absolute; inset: 0; background: #eee; }
 </style>
 </head>
 <body>
@@ -25,6 +28,28 @@
 <div class="ghost">Hidden wrapper text<button class="shown" id="in-ghost">Visible inside hidden</button></div>
 
 <label><input type="checkbox" class="styled-check" id="styled">Styled checkbox</label>
+
+<input type="radio" name="trip" id="one-way" class="native-hidden">
+<label for="one-way">One Way</label>
+<input type="radio" name="trip" id="round-trip" class="native-hidden" checked>
+<label for="round-trip">Round Trip</label>
+
+<div aria-label="October 2026">
+  <button title="2026-10-06">6</button>
+  <button title="2026-10-07">7</button>
+</div>
+<div aria-label="November 2026">
+  <button title="2026-11-06">6</button>
+  <button title="2026-11-07">7</button>
+</div>
+
+<label for="pw">Password</label>
+<input id="pw" type="password">
+
+<div class="covered-zone">
+  <button id="under">Under the shield</button>
+  <div class="shield"></div>
+</div>
 
 <input type="hidden" name="csrf" value="secret-token">
 

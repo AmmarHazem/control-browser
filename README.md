@@ -123,6 +123,30 @@ replays scripted turns, so Runs are deterministic. `evals/` holds real-web tasks
 often the agent actually succeeds; they need a real model and are not part of the suite — see
 [evals/README.md](evals/README.md).
 
+## Debugging what the agent sees
+
+When a Run fails on a site, the question is almost always the same: *what is visible and clickable
+in the browser that the agent cannot act on?* `scripts/inspect_page.py` answers it. It drives a page
+step by step and, after each step, lists the elements that are visible and look interactive — a
+native control, an interactive role, `tabindex`, `onclick`, a `cursor: pointer` boundary, or a label
+whose real control is hidden — but carry no ref in the snapshot.
+
+```bash
+.venv/bin/python scripts/inspect_page.py https://www.wingie.ae/en/ \
+  --step 'type|combobox "From"|Abu Dhabi' --step 'wait|1.5' \
+  --step 'click|option "Abu Dhabi"' \
+  --step 'click|combobox "Depart on"' --step 'wait|1.5' \
+  --show 'October'
+```
+
+A step is `action|needle|text`, where the needle picks the first snapshot line containing it that
+carries a ref; `--show` prints the snapshot around a match after the last step, and `--headed`
+opens a visible window. The same check, `find_unreachable`, runs as a test over every fixture page,
+so a collector change that hides something fails the suite.
+
+The Trace of every Run stores each observation in full, so `GET /runs/<id>/events` shows exactly
+what the model was shown at each step.
+
 ## What v1 does not do
 
 Logged-in sites and per-user browser profiles, file downloads and uploads, PDF rendering,

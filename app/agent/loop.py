@@ -65,6 +65,9 @@ class RunLoop:
         self._deadline = time.monotonic() + spec.timeout_seconds
         self._source_offset = len(session.visited_urls)
         self._restore: dict[str, Any] | None = None
+        self._download_ids: list[str] = []
+        self._selected_download_ids: list[str] = []
+        self._last_download_progress: dict[str, int] = {}
 
     async def execute(self) -> None:
         run = self.run
@@ -183,7 +186,7 @@ class RunLoop:
             self._messages.append({"role": "assistant", "content": content})
             self._messages.append({"role": "user", "content": NUDGE})
             return False
-        if self.run.spec.output_schema is None and content.strip():
+        if self.run.spec.output_schema is None and content.strip() and not self._download_ids:
             await self._finish(Outcome.COMPLETED, result=content.strip())
             return True
         await self._finish(
@@ -229,6 +232,11 @@ class RunLoop:
             return True
 
         result = await self._call_action(name, args)
+        if name in ("download_url", "download_ref") and result.ok:
+            download = result.data.get("download")
+            if download:
+                self._download_ids.append(download["id"])
+                self.run.download_ids.append(download["id"])
         await self._record_result(name, result)
         await self._reply(call, result.as_dict())
 
@@ -301,6 +309,22 @@ class RunLoop:
         )
 
     async def _handle_done(self, call: dict[str, Any], args: dict[str, Any]) -> bool:
+        selected = args.get("download_ids", [])
+        if self._download_ids and (not isinstance(selected, list) or not selected):
+            await self._reply(
+                call,
+                {"ok": False, "error": "include download_ids for all requested files, or give up"},
+            )
+            return False
+        if selected and (
+            not isinstance(selected, list)
+            or any(not isinstance(i, str) or i not in self._download_ids for i in selected)
+        ):
+            await self._reply(
+                call, {"ok": False, "error": "unknown download_ids; use IDs from this run"}
+            )
+            return False
+        self._selected_download_ids = selected
         result = args.get("result")
         schema = self.run.spec.output_schema
         if schema is not None:
@@ -358,9 +382,11 @@ class RunLoop:
         ]
         session.forget_host_decisions()
         session.risk_gate = self._risk_gate
+        session.download_progress = self._download_progress
 
     def _restore_session_policy(self) -> None:
         self.session.risk_gate = None
+        self.session.download_progress = None
         if self._restore is None:
             return
         self.session.limits = self._restore["limits"]
@@ -427,7 +453,56 @@ class RunLoop:
     async def _finish(
         self, outcome: Outcome, *, result: Any = None, error: str | None = None
     ) -> None:
-        self.run.record.sources = list(self.session.visited_urls[self._source_offset :])
+        downloads = []
+        if outcome is Outcome.COMPLETED:
+            finalization_deadline = (
+                time.monotonic() + self.session.downloads.finalization_seconds
+                if self._selected_download_ids
+                else 0.0
+            )
+            for file_id in self._download_ids:
+                if file_id not in self._selected_download_ids:
+                    await self.session.downloads.cancel(file_id)
+                    record = self.session.downloads.get(file_id)
+                    if record:
+                        downloads.append(record)
+                    continue
+                remaining = max(0.0, finalization_deadline - time.monotonic())
+                try:
+                    record = await asyncio.wait_for(
+                        self.session.downloads.wait(file_id), timeout=remaining
+                    )
+                except TimeoutError:
+                    await self.session.downloads.cancel(file_id)
+                    record = self.session.downloads.get(file_id)
+                if record:
+                    downloads.append(record)
+            failed = [
+                d
+                for d in downloads
+                if d["id"] in self._selected_download_ids and d["status"] != "completed"
+            ]
+            if failed:
+                outcome = Outcome.FAILED
+                error = "; ".join(f"{d['source_url']}: {d['error'] or d['status']}" for d in failed)
+        else:
+            for file_id in self._download_ids:
+                await self.session.downloads.cancel(file_id)
+                record = self.session.downloads.get(file_id)
+                if record:
+                    downloads.append(record)
+        if self.run.aborted:
+            outcome = Outcome.ABORTED
+            error = "the caller aborted this run"
+        self.run.record.downloads = downloads
+        self.run.record.sources = list(
+            dict.fromkeys(
+                [
+                    *self.session.visited_urls[self._source_offset :],
+                    *(d["source_url"] for d in downloads),
+                ]
+            )
+        )
         await self.run.mark_finished(outcome, result=result, error=error)
         event = {
             Outcome.COMPLETED: "run.completed",
@@ -443,8 +518,25 @@ class RunLoop:
                 "error": error,
                 "sources": self.run.record.sources,
                 "steps": self._step,
+                "downloads": downloads,
+                "completed_downloads": [d for d in downloads if d["status"] == "completed"],
+                "failed_downloads": [d for d in downloads if d["status"] != "completed"],
             },
         )
+
+    async def _download_progress(self, record: dict[str, Any]) -> None:
+        file_id = record["id"]
+        previous = self._last_download_progress.get(file_id, 0)
+        if record["status"] == "completed" or record["bytes_received"] - previous >= 1024 * 1024:
+            self._last_download_progress[file_id] = record["bytes_received"]
+            await self.run.emit(
+                "download.progress",
+                {
+                    "download_id": file_id,
+                    "bytes_received": record["bytes_received"],
+                    "total_bytes": record["total_bytes"],
+                },
+            )
 
 
 def _function_calls(calls: Any) -> list[Any]:

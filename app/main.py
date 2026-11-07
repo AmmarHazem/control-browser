@@ -19,6 +19,7 @@ from app.browser.pool import SessionPool
 from app.config import Settings, get_settings
 from app.logging_setup import configure_logging
 from app.search import SearxngSearch
+from app.storage.downloads import DownloadStore
 from app.storage.repository import SqliteRunRepository
 from app.storage.screenshots import ScreenshotStore
 
@@ -36,6 +37,7 @@ class Container:
     screenshots: ScreenshotStore
     runs: RunManager
     search: Any | None
+    downloads: DownloadStore
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
@@ -44,7 +46,15 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         self._keys = set(keys)
 
     async def dispatch(self, request: Request, call_next):
-        if not self._keys or request.url.path in PUBLIC_PATHS:
+        if (
+            not self._keys
+            or request.url.path in PUBLIC_PATHS
+            or (
+                request.method == "GET"
+                and request.url.path.startswith("/downloads/")
+                and request.url.path.count("/") == 2
+            )
+        ):
             return await call_next(request)
         provided = request.headers.get("x-api-key") or _bearer(request)
         if provided not in self._keys:
@@ -67,6 +77,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool = SessionPool(settings)
+        downloads = DownloadStore(
+            settings.download_dir,
+            max_bytes=settings.download_max_bytes,
+            total_bytes_cap=settings.download_total_bytes_cap,
+            retention_seconds=settings.download_retention_seconds,
+            finalization_seconds=settings.download_finalization_seconds,
+            max_concurrent=settings.download_max_concurrent,
+        )
+        pool.downloads = downloads
         await pool.start()
         repository = SqliteRunRepository(settings.db_path)
         screenshots = ScreenshotStore(
@@ -76,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sweeper = asyncio.create_task(
             screenshots.sweep_forever(settings.screenshot_sweep_interval_seconds)
         )
+        download_sweeper = asyncio.create_task(downloads.sweep_forever(3600))
         search = (
             SearxngSearch(settings.searxng_url, settings.searxng_timeout)
             if settings.searxng_url
@@ -88,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             screenshots=screenshots,
             runs=RunManager(settings, pool, repository, screenshots, search),
             search=search,
+            downloads=downloads,
         )
         app.state.container = container
         logger.info(
@@ -102,8 +123,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yield
         finally:
             sweeper.cancel()
+            download_sweeper.cancel()
             with suppress(asyncio.CancelledError):
                 await sweeper
+            with suppress(asyncio.CancelledError):
+                await download_sweeper
             await container.runs.shutdown()
             await pool.shutdown()
             repository.close()

@@ -115,6 +115,8 @@ class Run:
         self.pending: PendingConfirmation | None = None
         self.task_handle: asyncio.Task | None = None
         self.owns_session = spec.session_id is None
+        self.download_ids: list[str] = []
+        self.download_store: Any = None
 
         self._repository = repository
         self._subscribers: set[asyncio.Queue] = set()
@@ -168,6 +170,9 @@ class Run:
 
     def abort(self) -> None:
         self._aborted = True
+        if self.download_store:
+            for file_id in self.download_ids:
+                asyncio.create_task(self.download_store.cancel(file_id))
         if self.pending and not self.pending.future.done():
             self.pending.future.set_result((Decision.ABORT, None))
 

@@ -29,6 +29,15 @@ How you see a page
 How to work
 - Dismiss cookie and consent banners before anything else; they block the page.
 - Prefer search() to start research. Only browse a search engine if search() is unavailable.
+- For a file download Task, use download_url() for a direct file URL or download_ref() for a
+  direct link or download control. Check download_status() if needed. Only call done() with
+  download_ids listing every requested successful file. A page or source URL alone is not a file.
+- For a download Task requiring discovery, use search() to find candidates. If search() is
+  unavailable, give_up and explain that SearXNG must be configured. Do not browse a search
+  engine as a substitute for a download discovery Task.
+- Choose a source that fits the title and other clues in the Task. If no match is convincing,
+  return candidates instead of downloading a guess. Try another candidate after a failed
+  Download. Do not bypass login, payment, captcha, or DRM barriers.
 - Read before acting: check that the element you are about to use is the one you mean.
 - Before submitting a form, set every field the task specifies, including dates, and check that
   each one shows the value you meant in the snapshot. A field you did not set keeps the site's
@@ -77,10 +86,15 @@ DONE_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
+                "download_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "IDs of requested files that succeeded; omit for other tasks.",
+                },
                 "result": {
                     "description": "The answer. A JSON object when the caller gave a schema, "
                     "otherwise plain text."
-                }
+                },
             },
             "required": ["result"],
         },

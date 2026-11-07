@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS runs (
     steps INTEGER NOT NULL DEFAULT 0,
     request TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
-    finished_at REAL
+    finished_at REAL,
+    downloads TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS events (
     run_id TEXT NOT NULL,
@@ -50,6 +51,7 @@ class RunRecord:
     request: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    downloads: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +68,9 @@ class RunRecord:
             "request": self.request,
             "created_at": self.created_at,
             "finished_at": self.finished_at,
+            "downloads": self.downloads,
+            "completed_downloads": [d for d in self.downloads if d["status"] == "completed"],
+            "failed_downloads": [d for d in self.downloads if d["status"] != "completed"],
         }
 
 
@@ -98,6 +103,11 @@ class SqliteRunRepository:
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.executescript(SCHEMA)
+        columns = {row[1] for row in self._connection.execute("PRAGMA table_info(runs)")}
+        if "downloads" not in columns:
+            self._connection.execute(
+                "ALTER TABLE runs ADD COLUMN downloads TEXT NOT NULL DEFAULT '[]'"
+            )
         self._connection.commit()
         self._lock = asyncio.Lock()
 
@@ -115,12 +125,12 @@ class SqliteRunRepository:
         self._connection.execute(
             """
             INSERT INTO runs (id, task, status, outcome, result, error, sources, session_id,
-                              tenant_id, steps, request, created_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              tenant_id, steps, request, created_at, finished_at, downloads)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status=excluded.status, outcome=excluded.outcome, result=excluded.result,
                 error=excluded.error, sources=excluded.sources, session_id=excluded.session_id,
-                steps=excluded.steps, finished_at=excluded.finished_at
+                steps=excluded.steps, finished_at=excluded.finished_at, downloads=excluded.downloads
             """,
             (
                 record.id,
@@ -136,6 +146,7 @@ class SqliteRunRepository:
                 json.dumps(record.request),
                 record.created_at,
                 record.finished_at,
+                json.dumps(record.downloads),
             ),
         )
         self._connection.commit()
@@ -196,4 +207,5 @@ def _to_record(row: sqlite3.Row) -> RunRecord:
         request=json.loads(row["request"] or "{}"),
         created_at=row["created_at"],
         finished_at=row["finished_at"],
+        downloads=json.loads(row["downloads"] or "[]"),
     )

@@ -14,6 +14,20 @@ class _Handler(SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        if self.path == "/download-file":
+            body = b"fixture file\x00\xff"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="fixture.bin"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path == "/download-redirect":
+            self.send_response(302)
+            self.send_header("Location", "/index.html")
+            self.end_headers()
+            return
         if self.path == "/":
             self.path = "/index.html"
         super().do_GET()

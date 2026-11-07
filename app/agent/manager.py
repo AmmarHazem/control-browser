@@ -104,6 +104,7 @@ class RunManager:
             )
 
         run = Run(spec, self._repository)
+        run.download_store = self._pool.downloads
         run.record.session_id = session.id
         await run.persist()
         self._runs[run.id] = run

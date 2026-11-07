@@ -14,6 +14,7 @@ from app.browser.session import Session, SessionLimits
 from app.config import Settings
 from app.policy.network import DomainPolicy
 from app.policy.ratelimit import HostRateLimiter
+from app.storage.downloads import DownloadStore
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class SessionPool:
         self._janitor: asyncio.Task | None = None
         self._rate_limiter = HostRateLimiter(settings.navigation_min_interval_seconds)
         self._user_agent: str | None = settings.browser_user_agent
+        self.downloads: DownloadStore | None = None
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
@@ -121,7 +123,7 @@ class SessionPool:
                 "height": settings.browser_viewport_height,
             },
             user_agent=self._user_agent,
-            accept_downloads=False,
+            accept_downloads=True,
             storage_state=storage_state,  # type: ignore[arg-type]
         )
         session = Session(
@@ -141,6 +143,7 @@ class SessionPool:
             auto_snapshot=auto_snapshot,
         )
         await session.install_network_guard()
+        session.downloads = self.downloads
         async with self._lock:
             self._sessions[session.id] = session
         logger.info("session opened", extra={"session_id": session.id})

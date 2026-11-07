@@ -190,3 +190,33 @@ async def get_screenshot(run_id: str, step: int, request: Request) -> FileRespon
     if not path.exists():
         raise HTTPException(status_code=404, detail="no screenshot stored for this step")
     return FileResponse(path, media_type="image/png")
+
+
+@router.get("/downloads/{file_id}")
+async def retrieve_download(file_id: str, request: Request) -> FileResponse:
+    store = _container(request).downloads
+    record = store.get(file_id)
+    path = store.path(file_id)
+    if path is None or record is None:
+        raise HTTPException(status_code=404, detail="download not found or expired")
+    return FileResponse(
+        path,
+        media_type=record["media_type"],
+        filename=record["filename"],
+        headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@router.get("/downloads/{file_id}/status")
+async def download_status(file_id: str, request: Request) -> dict[str, Any]:
+    record = _container(request).downloads.get(file_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="unknown Download ID")
+    return record
+
+
+@router.post("/downloads/{file_id}/cancel")
+async def cancel_download(file_id: str, request: Request) -> dict[str, Any]:
+    if not await _container(request).downloads.cancel(file_id):
+        raise HTTPException(status_code=409, detail="download is not active")
+    return {"cancelled": True}

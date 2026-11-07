@@ -97,6 +97,8 @@ class Session:
         self.allow_private_addresses = allow_private_addresses
         self.auto_snapshot = auto_snapshot
         self.risk_gate: RiskGate | None = None
+        self.downloads: Any = None
+        self.download_progress: Any = None
 
         self.created_at = time.monotonic()
         self.last_used = time.monotonic()
@@ -340,6 +342,70 @@ class Session:
 
         await _settle(page, self.limits.settle_quiet_ms)
         return await self._finish(f"clicked {ref}")
+
+    async def download_url(self, url: str) -> ActionResult:
+        self.touch()
+        if self.downloads is None:
+            return ActionResult(ok=False, error="downloads are not configured")
+        try:
+            await check_url(url, self.domain_policy, allow_private=self.allow_private_addresses)
+        except NetworkPolicyError as exc:
+            return ActionResult(ok=False, error=f"download blocked: {exc}")
+        await self._gate_url(url, "download_url")
+        page = await self.page()
+        cookies = await self.context.cookies(url)
+        source = urlsplit(page.url)
+        target = urlsplit(url)
+        headers = (
+            {"Referer": page.url}
+            if source.netloc == target.netloc and source.scheme == target.scheme
+            else {}
+        )
+        if cookies:
+            headers["Cookie"] = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+        try:
+            record = self.downloads.start(
+                url,
+                policy=self.domain_policy,
+                allow_private=self.allow_private_addresses,
+                headers=headers,
+                on_progress=self.download_progress,
+            )
+        except ValueError as exc:
+            return ActionResult(ok=False, error=str(exc))
+        return ActionResult(ok=True, detail="download started", data={"download": record})
+
+    async def download_ref(self, ref: str) -> ActionResult:
+        self.touch()
+        locator, error = await self._locator(ref)
+        if error:
+            return error
+        assert locator is not None
+        page = await self.page()
+        try:
+            async with page.expect_download(
+                timeout=self.limits.interaction_timeout_seconds * 1000
+            ) as event:
+                await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
+            browser_download = await event.value
+            url = browser_download.url
+            if not url.startswith(("http://", "https://")):
+                await browser_download.cancel()
+                return ActionResult(ok=False, error="the download has no direct HTTP URL")
+            try:
+                await check_url(url, self.domain_policy, allow_private=self.allow_private_addresses)
+                await self._gate_url(url, "download_ref")
+                record = self.downloads.start_browser(
+                    browser_download, on_progress=self.download_progress
+                )
+            except (NetworkPolicyError, ValueError, ActionRejected) as exc:
+                await browser_download.cancel()
+                return ActionResult(ok=False, error=f"download blocked: {exc}")
+            return ActionResult(ok=True, detail="download started", data={"download": record})
+        except (PlaywrightError, PlaywrightTimeout) as exc:
+            return ActionResult(
+                ok=False, error=f"this control did not produce a direct download: {_clean(exc)}"
+            )
 
     async def type_text(
         self, ref: str, text: str, *, clear: bool = True, press_enter: bool = False

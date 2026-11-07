@@ -42,6 +42,34 @@ _REF = {"type": "string", "description": "A ref from the current snapshot, such 
 
 TOOL_SPECS: list[ToolSpec] = [
     ToolSpec(
+        "download_url",
+        "Start saving a direct file URL without changing its bytes. Return a Download ID.",
+        {"url": {"type": "string", "description": "Absolute http(s) file URL."}},
+        ["url"],
+        handler=lambda s, a: s.download_url(str(a["url"])),
+    ),
+    ToolSpec(
+        "download_ref",
+        "Start saving the direct file linked by a Ref in the current Snapshot.",
+        {"ref": _REF},
+        ["ref"],
+        handler=lambda s, a: s.download_ref(str(a["ref"])),
+    ),
+    ToolSpec(
+        "download_status",
+        "Check a Download ID for progress, completion, or failure.",
+        {"download_id": {"type": "string"}},
+        ["download_id"],
+        handler=lambda s, a: _download_status(s, str(a["download_id"])),
+    ),
+    ToolSpec(
+        "cancel_download",
+        "Cancel an active Download and remove partial bytes.",
+        {"download_id": {"type": "string"}},
+        ["download_id"],
+        handler=lambda s, a: _cancel_download(s, str(a["download_id"])),
+    ),
+    ToolSpec(
         "navigate",
         "Open a url in the active tab and return a snapshot of the page that loads.",
         {"url": {"type": "string", "description": "An absolute http(s) url."}},
@@ -196,6 +224,25 @@ TOOL_SPECS: list[ToolSpec] = [
         handler=lambda s, a: s.close_tab(int(a["index"])),
     ),
 ]
+
+
+async def _download_status(session: Session, file_id: str) -> ActionResult:
+    record = session.downloads.get(file_id) if session.downloads else None
+    return ActionResult(
+        ok=record is not None,
+        data={"download": record} if record else {},
+        error=None if record else "unknown Download ID",
+    )
+
+
+async def _cancel_download(session: Session, file_id: str) -> ActionResult:
+    cancelled = await session.downloads.cancel(file_id) if session.downloads else False
+    return ActionResult(
+        ok=cancelled,
+        detail="download cancelled" if cancelled else "",
+        error=None if cancelled else "download is not active",
+    )
+
 
 SEARCH_SPEC = ToolSpec(
     "search",

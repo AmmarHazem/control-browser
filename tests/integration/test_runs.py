@@ -7,6 +7,46 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+async def test_run_returns_retrievable_download_and_trace(service, llm, site):
+    llm.tool("download_url", {"url": site.url("/download-file")})
+
+    def finish(request):
+        action = next(
+            json.loads(message["content"])
+            for message in reversed(request["messages"])
+            if message.get("role") == "tool"
+        )
+        file_id = action["download"]["id"]
+        return {
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "done_0",
+                    "type": "function",
+                    "function": {
+                        "name": "done",
+                        "arguments": json.dumps(
+                            {"result": "saved the fixture", "download_ids": [file_id]}
+                        ),
+                    },
+                }
+            ],
+        }
+
+    llm.turns.append(finish)
+    record = await _run(service, {"task": "download the fixture file"})
+    assert record["outcome"] == "completed"
+    assert len(record["completed_downloads"]) == 1
+    file_id = record["completed_downloads"][0]["id"]
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{service.base_url}/downloads/{file_id}")
+    assert response.content == b"fixture file\x00\xff"
+    assert any(
+        event["type"] == "run.completed" and event["downloads"]
+        for event in await _events(service, record["id"])
+    )
+
+
 async def test_a_run_drives_the_browser_and_completes(service, llm, site):
     llm.tool("navigate", {"url": site.url("/index.html")}).done("the fixture site is up")
 

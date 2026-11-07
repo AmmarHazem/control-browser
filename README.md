@@ -104,6 +104,28 @@ The browser presents itself as an ordinary Chrome; it does not spoof fingerprint
 to beat captchas. The agent cannot execute JavaScript on a page, so hostile page text cannot
 escalate into code execution.
 
+## Direct file downloads
+
+The MCP Toolset exposes `download_url(session_id, url)`,
+`download_ref(session_id, ref)`, `download_status(session_id, download_id)`,
+and `cancel_download(session_id, download_id)`. The first two start a transfer
+and return a Download ID. `download_ref` handles direct links and controls
+that trigger a browser download, including one-time responses. Runs use the same
+Actions, include Download records in `GET /runs/<id>`, and stream
+`download.progress` events.
+
+`GET /downloads/<id>/status` and `POST /downloads/<id>/cancel` manage a
+transfer. A completed file can be retrieved from `GET /downloads/<id>` until
+it expires. The file ID is an unguessable bearer capability: anyone with it
+can retrieve the file without an API key. Keep IDs private. Files expire after
+24 hours by default; the size cap is 5 GiB per file, with three concurrent
+transfers. Configure these with `DOWNLOAD_RETENTION_SECONDS`,
+`DOWNLOAD_MAX_BYTES`, `DOWNLOAD_TOTAL_BYTES_CAP`, and `DOWNLOAD_MAX_CONCURRENT`.
+
+The service preserves the original bytes and does not extract streams from
+YouTube watch pages, transcode media, or bypass login, payment, captcha, or
+DRM barriers. Search-based download Tasks require configured SearXNG.
+
 ## Configuration
 
 Everything is environment-driven — see [.env.example](.env.example). Callers may override the
@@ -149,6 +171,6 @@ what the model was shown at each step.
 
 ## What v1 does not do
 
-Logged-in sites and per-user browser profiles, file downloads and uploads, PDF rendering,
+Logged-in sites and per-user browser profiles, file uploads, PDF rendering,
 drag-and-drop, arbitrary JavaScript, captcha solving, multi-replica deployment, Prometheus or
 OpenTelemetry. The seams for the first two are in place; the rest are deliberate omissions.

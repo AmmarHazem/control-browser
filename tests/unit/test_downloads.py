@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -181,3 +184,73 @@ async def test_retrieval_is_public_by_id_but_status_requires_api_key(tmp_path, s
             assert status.json()["status"] == "completed"
     finally:
         source.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_waiter_does_not_cancel_download(tmp_path, site):
+    store = DownloadStore(
+        tmp_path / "downloads", max_bytes=1024, retention_seconds=86400, max_concurrent=1
+    )
+    await store._slots.acquire()
+    started = store.start(site.url("/download-file"), policy=DomainPolicy(), allow_private=True)
+    waiter = asyncio.create_task(store.wait(started["id"]))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert store.get(started["id"])["status"] == "pending"
+    finally:
+        store._slots.release()
+    assert (await store.wait(started["id"]))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_active_download_survives_retention_and_sweeper_prunes_expired(tmp_path, site):
+    root = tmp_path / "downloads"
+    store = DownloadStore(root, max_bytes=1024, retention_seconds=0, max_concurrent=1)
+    await store._slots.acquire()
+    started = store.start(site.url("/download-file"), policy=DomainPolicy(), allow_private=True)
+    try:
+        assert store.get(started["id"])["status"] == "pending"
+    finally:
+        store._slots.release()
+    assert (await store.wait(started["id"]))["status"] == "expired"
+    store.sweep()
+    assert store.get(started["id"]) is None
+    assert started["id"] not in store._tasks
+    assert not (root / f"{started['id']}.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_browser_download_stops_when_copy_exceeds_size_cap(tmp_path):
+    class SlowDownload:
+        url = "http://example.test/file"
+        suggested_filename = "file.bin"
+
+        def __init__(self):
+            self.cancelled = False
+
+        async def save_as(self, path):
+            with path.open("wb") as output:
+                for _ in range(20):
+                    if self.cancelled:
+                        raise ValueError("download cancelled")
+                    output.write(b"x" * 16)
+                    await asyncio.sleep(0.15)
+
+        async def cancel(self):
+            self.cancelled = True
+
+    store = DownloadStore(
+        tmp_path / "downloads", max_bytes=32, retention_seconds=86400, max_concurrent=1
+    )
+    download = SlowDownload()
+    record = store.start_browser(download, media_type="audio/mpeg")
+    result = await store.wait(record["id"])
+    assert result["status"] == "failed"
+    assert download.cancelled
+    assert result["media_type"] == "audio/mpeg"
+    assert store.path(record["id"]) is None
+    assert not (store.root / f"{record['id']}.part").exists()
+    assert json.loads((store.root / f"{record['id']}.json").read_text()) == result

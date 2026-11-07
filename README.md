@@ -121,6 +121,7 @@ can retrieve the file without an API key. Keep IDs private. Files expire after
 24 hours by default; the size cap is 5 GiB per file, with three concurrent
 transfers. Configure these with `DOWNLOAD_RETENTION_SECONDS`,
 `DOWNLOAD_MAX_BYTES`, `DOWNLOAD_TOTAL_BYTES_CAP`, and `DOWNLOAD_MAX_CONCURRENT`.
+Runs get a separate `DOWNLOAD_FINALIZATION_SECONDS` budget after the agent calls `done()`.
 
 The service preserves the original bytes and does not extract streams from
 YouTube watch pages, transcode media, or bypass login, payment, captcha, or

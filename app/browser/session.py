@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from playwright.async_api import BrowserContext, Frame, Page, Request, Route
 from playwright.async_api import Error as PlaywrightError
@@ -313,6 +313,20 @@ class Session:
             return error
         assert locator is not None
 
+        await self._gate_click_target(locator, ref, "click")
+
+        page = await self.page()
+        try:
+            await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
+        except PlaywrightTimeout as exc:
+            return ActionResult(ok=False, error=_timeout_error(f"clicking {ref}", exc))
+        except PlaywrightError as exc:
+            return ActionResult(ok=False, error=f"clicking {ref} failed: {_clean(exc)}")
+
+        await _settle(page, self.limits.settle_quiet_ms)
+        return await self._finish(f"clicked {ref}")
+
+    async def _gate_click_target(self, locator, ref: str, action: str) -> None:
         probe = await _probe(locator)
         if probe and is_submit_control(
             tag=probe["tag"],
@@ -325,23 +339,17 @@ class Session:
                     RiskSource.STRUCTURAL,
                     f'click on {probe["tag"]} "{probe.get("label") or ref}" submits a form',
                 ),
-                "click",
+                action,
                 {"ref": ref},
             )
         if probe and probe.get("href"):
-            await self._gate_url(probe["href"], "click")
-        await self._gate_url((await self.page()).url, "click")
-
-        page = await self.page()
-        try:
-            await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
-        except PlaywrightTimeout as exc:
-            return ActionResult(ok=False, error=_timeout_error(f"clicking {ref}", exc))
-        except PlaywrightError as exc:
-            return ActionResult(ok=False, error=f"clicking {ref} failed: {_clean(exc)}")
-
-        await _settle(page, self.limits.settle_quiet_ms)
-        return await self._finish(f"clicked {ref}")
+            href = urljoin((await self.page()).url, probe["href"])
+            if action == "download_ref" and href.startswith(("http://", "https://")):
+                await check_url(
+                    href, self.domain_policy, allow_private=self.allow_private_addresses
+                )
+            await self._gate_url(href, action)
+        await self._gate_url((await self.page()).url, action)
 
     async def download_url(self, url: str) -> ActionResult:
         self.touch()
@@ -377,11 +385,27 @@ class Session:
 
     async def download_ref(self, ref: str) -> ActionResult:
         self.touch()
+        if self.downloads is None:
+            return ActionResult(ok=False, error="downloads are not configured")
         locator, error = await self._locator(ref)
         if error:
             return error
         assert locator is not None
+        try:
+            await self._gate_click_target(locator, ref, "download_ref")
+        except NetworkPolicyError as exc:
+            return ActionResult(ok=False, error=f"download blocked: {exc}")
         page = await self.page()
+        response_types: dict[str, str] = {}
+        response_lengths: dict[str, int] = {}
+
+        def capture_response(response) -> None:
+            response_types[response.url] = response.headers.get("content-type", "").split(";")[0]
+            length = response.headers.get("content-length", "")
+            if length.isdigit():
+                response_lengths[response.url] = int(length)
+
+        page.on("response", capture_response)
         try:
             async with page.expect_download(
                 timeout=self.limits.interaction_timeout_seconds * 1000
@@ -389,6 +413,9 @@ class Session:
                 await locator.click(timeout=self.limits.interaction_timeout_seconds * 1000)
             browser_download = await event.value
             url = browser_download.url
+            if response_lengths.get(url, 0) > self.downloads.max_bytes:
+                await browser_download.cancel()
+                return ActionResult(ok=False, error="file exceeds the configured size limit")
             if not url.startswith(("http://", "https://")):
                 await browser_download.cancel()
                 return ActionResult(ok=False, error="the download has no direct HTTP URL")
@@ -396,7 +423,9 @@ class Session:
                 await check_url(url, self.domain_policy, allow_private=self.allow_private_addresses)
                 await self._gate_url(url, "download_ref")
                 record = self.downloads.start_browser(
-                    browser_download, on_progress=self.download_progress
+                    browser_download,
+                    media_type=response_types.get(url),
+                    on_progress=self.download_progress,
                 )
             except (NetworkPolicyError, ValueError, ActionRejected) as exc:
                 await browser_download.cancel()
@@ -406,6 +435,8 @@ class Session:
             return ActionResult(
                 ok=False, error=f"this control did not produce a direct download: {_clean(exc)}"
             )
+        finally:
+            page.remove_listener("response", capture_response)
 
     async def type_text(
         self, ref: str, text: str, *, clear: bool = True, press_enter: bool = False

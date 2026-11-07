@@ -47,6 +47,13 @@ async def test_run_returns_retrievable_download_and_trace(service, llm, site):
     )
 
 
+async def test_mentioning_download_in_a_research_task_does_not_require_a_file(service, llm):
+    llm.done("the page lists the size")
+    record = await _run(service, {"task": "find the download size of Node 22"})
+    assert record["outcome"] == "completed"
+    assert record["downloads"] == []
+
+
 async def test_a_run_drives_the_browser_and_completes(service, llm, site):
     llm.tool("navigate", {"url": site.url("/index.html")}).done("the fixture site is up")
 

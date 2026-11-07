@@ -43,3 +43,39 @@ async def test_blocked_download_url(session, site, tmp_path):
     result = await session.download_url(site.url("/download-file"))
     assert not result.ok
     assert "blocked" in result.error
+
+
+async def test_download_ref_requires_store_before_click(session, site):
+    assert (await session.navigate(site.url("/form.html"))).ok
+    line = next(
+        line for line in session.last_snapshot.splitlines() if 'button "Send message"' in line
+    )
+    ref = line.split("[ref=")[1].split("]")[0]
+    result = await session.download_ref(ref)
+    assert not result.ok
+    assert "not configured" in result.error
+    assert "/form.html" in (await session.page()).url
+
+
+async def test_download_ref_uses_structural_risk_gate(session, site, tmp_path):
+    from app.browser.session import ActionRejected
+
+    session.downloads = DownloadStore(
+        tmp_path / "downloads", max_bytes=1024, retention_seconds=86400, max_concurrent=1
+    )
+    assert (await session.navigate(site.url("/form.html"))).ok
+    line = next(
+        line for line in session.last_snapshot.splitlines() if 'button "Send message"' in line
+    )
+    ref = line.split("[ref=")[1].split("]")[0]
+    seen = []
+
+    async def reject(finding, action, context):
+        seen.append((finding.source, action))
+        raise ActionRejected("confirmation denied")
+
+    session.risk_gate = reject
+    with pytest.raises(ActionRejected, match="confirmation denied"):
+        await session.download_ref(ref)
+    assert seen[0][1] == "download_ref"
+    assert "/form.html" in (await session.page()).url

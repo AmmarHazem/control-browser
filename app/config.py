@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     download_max_bytes: int = 5 * 1024**3
     download_total_bytes_cap: int = 20 * 1024**3
     download_retention_seconds: float = 86400.0
+    download_finalization_seconds: float = 3600.0
     download_max_concurrent: int = 3
 
     @field_validator("api_keys", "blocked_domains", mode="before")

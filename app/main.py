@@ -82,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_bytes=settings.download_max_bytes,
             total_bytes_cap=settings.download_total_bytes_cap,
             retention_seconds=settings.download_retention_seconds,
+            finalization_seconds=settings.download_finalization_seconds,
             max_concurrent=settings.download_max_concurrent,
         )
         pool.downloads = downloads

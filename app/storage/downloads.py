@@ -68,18 +68,23 @@ class DownloadStore:
         retention_seconds: float,
         max_concurrent: int,
         total_bytes_cap: int | None = None,
+        finalization_seconds: float = 3600.0,
     ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_bytes = max_bytes
         self.total_bytes_cap = total_bytes_cap or max_bytes * max_concurrent
         self.retention_seconds = retention_seconds
+        self.finalization_seconds = finalization_seconds
         self._slots = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task] = {}
         self._records: dict[str, dict] = {}
         for entry in root.glob("*.json"):
             try:
                 record = json.loads(entry.read_text())
+                if record["status"] == "expired":
+                    entry.unlink(missing_ok=True)
+                    continue
                 if record["status"] in ("pending", "running"):
                     record["status"] = "failed"
                     record["error"] = "service restarted during transfer"
@@ -89,14 +94,29 @@ class DownloadStore:
                 continue
         for partial in root.glob("*.part"):
             partial.unlink(missing_ok=True)
+        for temporary in root.glob("*.tmp"):
+            temporary.unlink(missing_ok=True)
+        for completed in root.glob("*.bin"):
+            if self._records.get(completed.stem, {}).get("status") != "completed":
+                completed.unlink(missing_ok=True)
 
     def _save(self, record: dict) -> None:
-        (self.root / f"{record['id']}.json").write_text(json.dumps(record))
+        target = self.root / f"{record['id']}.json"
+        temporary = self.root / f"{record['id']}.{uuid.uuid4().hex}.tmp"
+        try:
+            temporary.write_text(json.dumps(record))
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def get(self, file_id: str) -> dict | None:
         record = self._records.get(file_id)
-        timestamp = record.get("completed_at") or record["created_at"] if record else None
-        if record and timestamp and time.time() - timestamp >= self.retention_seconds:
+        timestamp = (
+            (record.get("completed_at") or record["created_at"])
+            if record and record["status"] in ("completed", "failed", "cancelled")
+            else None
+        )
+        if record and timestamp is not None and time.time() - timestamp >= self.retention_seconds:
             self._expire(record)
         return dict(record) if record else None
 
@@ -122,10 +142,20 @@ class DownloadStore:
     async def sweep_forever(self, interval: float) -> None:
         while True:
             await asyncio.sleep(interval)
-            for file_id in list(self._records):
-                self.get(file_id)
+            self.sweep()
+
+    def sweep(self) -> None:
+        for file_id in list(self._records):
+            record = self.get(file_id)
+            task = self._tasks.get(file_id)
+            if task and task.done():
+                self._tasks.pop(file_id, None)
+            if record and record["status"] == "expired":
+                self._records.pop(file_id, None)
+                (self.root / f"{file_id}.json").unlink(missing_ok=True)
 
     def _new_record(self, url: str) -> dict:
+        self.sweep()
         reserved = sum(
             self.max_bytes
             if r["status"] in ("pending", "running")
@@ -169,9 +199,12 @@ class DownloadStore:
         )
         return dict(record)
 
-    def start_browser(self, download: Download, *, on_progress=None) -> dict:
+    def start_browser(
+        self, download: Download, *, media_type: str | None = None, on_progress=None
+    ) -> dict:
         record = self._new_record(download.url)
         record["filename"] = safe_filename(download.suggested_filename)
+        record["media_type"] = media_type or "application/octet-stream"
         self._save(record)
         self._tasks[record["id"]] = asyncio.create_task(
             self._save_browser_download(record, download, on_progress)
@@ -183,15 +216,35 @@ class DownloadStore:
         try:
             async with self._slots:
                 record["status"] = "running"
-                self._save(record)
-                await download.save_as(partial)
-                size = partial.stat().st_size
+                await asyncio.to_thread(self._save, dict(record))
+                transfer = asyncio.create_task(download.save_as(partial))
+                try:
+                    while not transfer.done():
+                        await asyncio.sleep(0.1)
+                        size = await asyncio.to_thread(
+                            lambda: partial.stat().st_size if partial.exists() else 0
+                        )
+                        if size > self.max_bytes:
+                            await download.cancel()
+                            raise ValueError("file exceeds the configured size limit")
+                        if size > record["bytes_received"]:
+                            record["bytes_received"] = size
+                            if on_progress:
+                                try:
+                                    await on_progress(dict(record))
+                                except Exception:
+                                    pass
+                    await transfer
+                finally:
+                    if not transfer.done():
+                        transfer.cancel()
+                    await asyncio.gather(transfer, return_exceptions=True)
+                size = await asyncio.to_thread(lambda: partial.stat().st_size)
                 if size == 0 or size > self.max_bytes:
                     raise ValueError("empty file or file exceeds the configured size limit")
                 record["bytes_received"] = size
                 record["total_bytes"] = size
-                record["media_type"] = "application/octet-stream"
-                os.replace(partial, self.root / f"{record['id']}.bin")
+                await asyncio.to_thread(os.replace, partial, self.root / f"{record['id']}.bin")
                 record["status"] = "completed"
                 record["completed_at"] = time.time()
                 if on_progress:
@@ -208,15 +261,16 @@ class DownloadStore:
             record["error"] = str(exc)
         finally:
             partial.unlink(missing_ok=True)
-            self._save(record)
+            await asyncio.to_thread(self._save, dict(record))
 
     async def wait(self, file_id: str) -> dict | None:
         task = self._tasks.get(file_id)
         if task:
             try:
-                await task
+                await asyncio.shield(task)
             except asyncio.CancelledError:
-                pass
+                if not task.cancelled():
+                    raise
         return self.get(file_id)
 
     async def cancel(self, file_id: str) -> bool:
@@ -269,7 +323,10 @@ class DownloadStore:
                                 if not location:
                                     raise ValueError("redirect has no location")
                                 next_url = urljoin(url, location)
-                                if urlsplit(next_url).netloc != urlsplit(url).netloc:
+                                if (
+                                    urlsplit(next_url).netloc != urlsplit(url).netloc
+                                    or urlsplit(next_url).scheme != urlsplit(url).scheme
+                                ):
                                     headers = {
                                         k: v
                                         for k, v in headers.items()
@@ -307,9 +364,9 @@ class DownloadStore:
                                     record["bytes_received"] += len(chunk)
                                     if record["bytes_received"] > self.max_bytes:
                                         raise ValueError("file exceeds the configured size limit")
-                                    output.write(chunk)
+                                    await asyncio.to_thread(output.write, chunk)
                                     if record["bytes_received"] - last_persisted >= 1024 * 1024:
-                                        self._save(record)
+                                        await asyncio.to_thread(self._save, dict(record))
                                         last_persisted = record["bytes_received"]
                                     if on_progress:
                                         try:
@@ -318,7 +375,9 @@ class DownloadStore:
                                             pass
                             if not record["bytes_received"]:
                                 raise ValueError("source returned an empty file")
-                            os.replace(partial, self.root / f"{file_id}.bin")
+                            await asyncio.to_thread(
+                                os.replace, partial, self.root / f"{file_id}.bin"
+                            )
                             record["status"] = "completed"
                             record["completed_at"] = time.time()
                             return
@@ -331,4 +390,4 @@ class DownloadStore:
             record["error"] = str(exc)
         finally:
             partial.unlink(missing_ok=True)
-            self._save(record)
+            await asyncio.to_thread(self._save, dict(record))

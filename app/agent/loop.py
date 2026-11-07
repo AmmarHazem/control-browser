@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import logging
-import re
 import time
 from typing import Any, cast
 
@@ -187,12 +186,7 @@ class RunLoop:
             self._messages.append({"role": "assistant", "content": content})
             self._messages.append({"role": "user", "content": NUDGE})
             return False
-        if (
-            self.run.spec.output_schema is None
-            and content.strip()
-            and not self._download_ids
-            and not re.search(r"\bdownload(?:s|ing)?\b", self.run.spec.task, re.I)
-        ):
+        if self.run.spec.output_schema is None and content.strip() and not self._download_ids:
             await self._finish(Outcome.COMPLETED, result=content.strip())
             return True
         await self._finish(
@@ -315,9 +309,8 @@ class RunLoop:
         )
 
     async def _handle_done(self, call: dict[str, Any], args: dict[str, Any]) -> bool:
-        requested = bool(re.search(r"\bdownload(?:s|ing)?\b", self.run.spec.task, re.I))
         selected = args.get("download_ids", [])
-        if (requested or self._download_ids) and (not isinstance(selected, list) or not selected):
+        if self._download_ids and (not isinstance(selected, list) or not selected):
             await self._reply(
                 call,
                 {"ok": False, "error": "include download_ids for all requested files, or give up"},
@@ -462,6 +455,11 @@ class RunLoop:
     ) -> None:
         downloads = []
         if outcome is Outcome.COMPLETED:
+            finalization_deadline = (
+                time.monotonic() + self.session.downloads.finalization_seconds
+                if self._selected_download_ids
+                else 0.0
+            )
             for file_id in self._download_ids:
                 if file_id not in self._selected_download_ids:
                     await self.session.downloads.cancel(file_id)
@@ -469,7 +467,7 @@ class RunLoop:
                     if record:
                         downloads.append(record)
                     continue
-                remaining = max(0.0, self._deadline - time.monotonic())
+                remaining = max(0.0, finalization_deadline - time.monotonic())
                 try:
                     record = await asyncio.wait_for(
                         self.session.downloads.wait(file_id), timeout=remaining
@@ -493,6 +491,9 @@ class RunLoop:
                 record = self.session.downloads.get(file_id)
                 if record:
                     downloads.append(record)
+        if self.run.aborted:
+            outcome = Outcome.ABORTED
+            error = "the caller aborted this run"
         self.run.record.downloads = downloads
         self.run.record.sources = list(
             dict.fromkeys(
@@ -526,7 +527,7 @@ class RunLoop:
     async def _download_progress(self, record: dict[str, Any]) -> None:
         file_id = record["id"]
         previous = self._last_download_progress.get(file_id, 0)
-        if record["bytes_received"] - previous >= 1024 * 1024:
+        if record["status"] == "completed" or record["bytes_received"] - previous >= 1024 * 1024:
             self._last_download_progress[file_id] = record["bytes_received"]
             await self.run.emit(
                 "download.progress",
